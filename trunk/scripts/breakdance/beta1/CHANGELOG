@@ -1,0 +1,27 @@
+InflateGRO2 changelog
+
+################################################################################
+Date:       2011-07-21
+Version:    2b4
+
+ - Fixed bug in protein area calculation
+ - Improved support for --lrname parameter
+ - Fixed bug in grid handling: wrong summation of floating point numbers in Perl
+   (Error of wrong grid indexes)
+################################################################################
+
+
+################################################################################
+Date:       2011-11-19
+Version:    2b5
+
+ - Implementation of the improved protein area calculation
+ - Added PDB file support
+ - Write out grid densities as PDB b-factor
+################################################################################
+
+ToDo:
+ - Add NDX file updates
+ - Add full PDB file support
+ - Add TOP file update
+ - Add shrinking functionality

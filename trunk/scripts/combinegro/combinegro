@@ -1,0 +1,928 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+
+### Load Packages ##############################################################
+use strict;
+use Cwd;
+use IO::Handle;
+use FindBin qw($Bin); # Absolute path to THIS script.
+use Fcntl;
+autoflush STDOUT 1; # For direct output.
+################################################################################
+
+
+
+### Default Parameters #########################################################
+our $verbose      = 0;                  # Be loud and noisy (and global).
+
+my @inGroFiles;                         # Input GRO coordinates files.
+my $groOutFile    = 'aligned.gro';      # Output GRO file.
+################################################################################
+
+
+
+### Internal parameters ########################################################
+my @groData;          # Filled by "GROFiles::readGro(<GROFILE>)".
+################################################################################
+
+
+
+### Commandline-Parameters #####################################################
+my $isNoTMProt = 0;
+my %cmdLParam = ('igro=@'     => \@inGroFiles,
+                 'ogro'       => \$groOutFile,
+                 'v=f'        => \$verbose,
+                 'NOPARAM'    => \&printHelp,
+                 'UNKNOWN'    => \&printHelp,
+                 'help=f'     => \&printHelp,
+                 '?=f'        => \&printHelp,
+                 'h=f'        => \&printHelp);
+cmdlineParser(\%cmdLParam);
+################################################################################
+
+
+
+### Read the GRO files #########################################################
+foreach (@inGroFiles) {
+    %protData = GROFiles::readGro($_); # Read input GRO file.
+}
+################################################################################
+
+
+### Combine coordinates and write out into a GRO file ##########################
+my @protAtomIds = getAtomIds($protData{'atoms'});
+my @membAtomIds = getAtomIds($membData{'atoms'});
+# -> Translate all protein atoms to the center of the membrane box.
+centerGroup(\@protAtomIds, $protData{'atoms'}, $membData{'box'});
+
+my $zTranslVec;
+if ($beltZCenters[0]) {
+    $zTranslVec = $beltZCenters[0] - $membZCenter;
+}
+else {
+    print "Sorry, don't found a hydrophobic belt...\n";
+    exit;
+}
+zTranslateGroup(\@membAtomIds, $membData{'atoms'}, $zTranslVec);
+# -> Translate all bilayer atoms to the center (z-axis) of the protein belt.
+my %combData = combGroData(\%protData, \%membData);
+GROFiles::writeGro($groOutFile, \%combData);
+################################################################################
+exit;
+
+
+sub getAtomIds {
+    my $coordsRef = shift;
+    my @atomIds;
+    for (my $i=0; $i<@{$coordsRef}; $i++) {
+        push(@atomIds, $i) if $$coordsRef[$i]{'resId'};
+    }
+    return @atomIds;
+}
+
+
+
+sub centerGroup {
+    my $atomIdsRef = shift;
+    my $coordsRef  = shift;
+    my $boxRef     = shift;
+
+    my %groupGeoCenter = getGeoCenter($atomIdsRef, $coordsRef);
+    my %translVector = ('cooX' => ($$boxRef{'cooX'}*0.5-$groupGeoCenter{'cooX'}),
+                        'cooY' => ($$boxRef{'cooY'}*0.5-$groupGeoCenter{'cooY'}));
+    foreach (@{$atomIdsRef}) {
+        $$coordsRef[$_]{'cooX'} += $translVector{'cooX'};
+        $$coordsRef[$_]{'cooY'} += $translVector{'cooY'};
+    }
+}
+
+
+
+sub zTranslateGroup {
+    my $atomIdsRef = shift;
+    my $coordsRef  = shift;
+    my $zTranslVec = shift;
+
+    foreach (@{$atomIdsRef}) {
+        $$coordsRef[$_]{'cooZ'} += $zTranslVec;
+    }
+}
+
+
+
+################################################################################
+### Subroutines ################################################################
+################################################################################
+sub combGroData {
+    my $protGroDataRef = shift;
+    my $membGroDataRef = shift;
+    my %combGroData;
+
+    foreach (@{$$protGroDataRef{'atoms'}}) {
+        next unless $$_{'resId'};
+        push(@{$combGroData{'atoms'}}, $_);
+    }
+
+    foreach (@{$$membGroDataRef{'atoms'}}) {
+        next unless $$_{'resId'};
+        push(@{$combGroData{'atoms'}}, $_);
+    }
+
+    $combGroData{'title'}       = $$protGroDataRef{'title'} . ' + ' . $$membGroDataRef{'title'};
+    $combGroData{'nAtoms'}      = @{$combGroData{'atoms'}};
+    $combGroData{'box'}{'cooX'} = $$membGroDataRef{'box'}{'cooX'};
+    $combGroData{'box'}{'cooY'} = $$membGroDataRef{'box'}{'cooY'};
+    $combGroData{'box'}{'cooZ'} = $$protGroDataRef{'box'}{'cooZ'} > $$membGroDataRef{'box'}{'cooZ'} ? $$protGroDataRef{'box'}{'cooZ'} : $$membGroDataRef{'box'}{'cooZ'};
+
+    return %combGroData;
+}
+
+
+
+sub getBilayerThickness {
+    my $coordsRef     = shift;
+    my $headGroupsRef = shift;
+    my @resAtoms;
+    my @geoCenterHeads;
+    my @lowerLeafletResIds;
+    my @upperLeafletResIds;
+    my %upperLeaflGeoCenter;
+    my %lowerLeaflGeoCenter;
+    my $bilayerThickness;
+
+    print "  ---------------------------------\n  Detect bilayer thickness...\r";
+
+    my %bilayerGeoCenter = getGeoCenter($headGroupsRef, $coordsRef);
+#    printf("\nx %f and y %f and z %f\n", $bilayerGeoCenter{'cooX'}*10, $bilayerGeoCenter{'cooY'}*10, $bilayerGeoCenter{'cooZ'}*10);
+
+    ### Group atoms per residue ################################################
+    for (my $i=0; $i<@{$headGroupsRef}; $i++) {
+        my $atomId = $$headGroupsRef[$i];
+        next unless $$coordsRef[$atomId]{'resId'};
+        push(@{$resAtoms[$$coordsRef[$atomId]{'resId'}]}, $atomId);
+    }
+    ############################################################################
+
+
+    ### Get the geometrical center of each headgroup per leaflet ###############
+    for (my $resId=0; $resId<@resAtoms; $resId++) {
+        next unless $resAtoms[$resId];
+        %{$geoCenterHeads[$resId]} = getGeoCenter($resAtoms[$resId], $coordsRef);
+        $geoCenterHeads[$resId]{'cooZ'} < $bilayerGeoCenter{'cooZ'} ?
+            push(@lowerLeafletResIds, $resId) :
+            push(@upperLeafletResIds, $resId);
+    }
+    printf("\n    nLipids: %4d (upper leaflet)", scalar(@upperLeafletResIds)) if $main::verbose;
+    printf("\n             %4d (lower leaflet)", scalar(@lowerLeafletResIds)) if $main::verbose;
+    ############################################################################
+
+
+    ### Get the geometrical center of all leaflet-headgroups ###################
+    %upperLeaflGeoCenter = getGeoCenter(\@upperLeafletResIds, \@geoCenterHeads);
+    %lowerLeaflGeoCenter = getGeoCenter(\@lowerLeafletResIds, \@geoCenterHeads);
+    $bilayerThickness    = $upperLeaflGeoCenter{'cooZ'} - $lowerLeaflGeoCenter{'cooZ'};
+#    printf("Upper :: x %f and y %f and z %f\n", $upperLeaflGeoCenter{'cooX'}*10, $upperLeaflGeoCenter{'cooY'}*10, $upperLeaflGeoCenter{'cooZ'}*10);
+#    printf("Lower :: x %f and y %f and z %f\n", $lowerLeaflGeoCenter{'cooX'}*10, $lowerLeaflGeoCenter{'cooY'}*10, $lowerLeaflGeoCenter{'cooZ'}*10);
+    printf("\n    Averaged bilayer thickness: %f\n", $bilayerThickness) if $main::verbose;
+    ############################################################################
+
+    print "  Detect bilayer thickness: Finished\n  ---------------------------------\n\n";
+
+    return($bilayerThickness, $bilayerGeoCenter{'cooZ'});
+}
+
+
+
+sub selectGroupIds {
+    my $ndxDataRef    = shift;
+    my $groupNameText = shift;
+    my $nGroups       = shift;
+    my @selectGroupIds;
+
+    $nGroups = 10000 unless $nGroups; # Set the limit of selectable groups to 10000.
+
+    print "\n  Select a group for $groupNameText: > ";
+
+    chomp(my $groupId = <STDIN>);
+    while (!scalar(@selectGroupIds) || $groupId ne 'q') {
+        if ($groupId =~ /^\s*(\d+)?\s*$/ && $$ndxDataRef[$1]{'groupName'}) {
+            push(@selectGroupIds, $1);
+            print "    Added group $1.\n";
+            return @selectGroupIds if scalar(@selectGroupIds) == $nGroups;
+            print "  Do you want to select another group? (\'q\' for quit) > ";
+        }
+        else {
+            print "    Invalid group...\n  Please try to select a group for $groupNameText again (\'q\' for quit): > ";
+        }
+        chomp($groupId = <STDIN>);
+    }
+    return @selectGroupIds;
+}
+
+
+
+sub findProtVoxInY {
+    my $gridZXRef = shift;
+    my $yInitial  = shift;
+    my $rowEnd    = shift;
+    my $stepWidth = shift;
+    my @intGridPoints; # Protein internal grid points.
+
+    for (my $y=$yInitial; $y<$rowEnd; $y+=$stepWidth) {
+        return \@intGridPoints unless $$gridZXRef[$y]{'type'} eq 'VOX';
+        push(@intGridPoints, $y);
+    }
+    return 0;
+}
+
+
+
+sub buildGrid {
+    my $cgGroDataRef  = shift;
+    my $gridSize      = shift;
+    my $nMembranes    = shift;
+    my $gridOutFile   = shift;
+    my $membThickness = shift;
+    my $isTMProt      = shift;
+    my %cgGroData    = %{$cgGroDataRef};
+    my @grid;
+    my %safeBoxSize;
+    my $gridScale = 1000;
+    my $stepWidth = $gridSize*$gridScale;
+    my @gridZCounter;
+    my @beltZCenters;
+
+    my $bilayerGridHeight = $membThickness/$gridSize;
+
+
+    ### Build protein default grid #########################
+    $safeBoxSize{'cooX'} = $cgGroData{'box'}{'cooX'}*$gridScale + $stepWidth;
+    $safeBoxSize{'cooY'} = $cgGroData{'box'}{'cooY'}*$gridScale + $stepWidth;
+    $safeBoxSize{'cooZ'} = $cgGroData{'box'}{'cooZ'}*$gridScale + $stepWidth;
+
+    for (my $z=0; $z<$safeBoxSize{'cooZ'}; $z+=$stepWidth) {
+        for (my $x=0; $x<$safeBoxSize{'cooX'}; $x+=$stepWidth) {
+            for (my $y=0; $y<$safeBoxSize{'cooY'}; $y+=$stepWidth) {
+                $grid[int($z)][int($x)][int($y)]{'type'} = 'VOX';
+            }
+        }
+    }
+    ########################################################
+
+
+    ### Create protein grid ################################
+    my @containsProtein;
+    foreach (@{$cgGroData{'atoms'}}) {
+        next unless $$_{'resId'};
+        my $tmpX = round($$_{'cooX'}*$gridScale, $stepWidth);
+        my $tmpY = round($$_{'cooY'}*$gridScale, $stepWidth);
+        my $tmpZ = round($$_{'cooZ'}*$gridScale, $stepWidth);
+        $grid[$tmpZ][$tmpX][$tmpY]{'sum'} = $grid[$tmpZ][$tmpX][$tmpY]{'num'} = 0 if $grid[$tmpZ][$tmpX][$tmpY]{'type'} eq 'VOX';
+        if ($$_{'resName'} eq 'CHA') {
+            $grid[$tmpZ][$tmpX][$tmpY]{'type'} = 'PRO';
+            $grid[$tmpZ][$tmpX][$tmpY]{'sum'}+=20;
+            $grid[$tmpZ][$tmpX][$tmpY]{'num'}++;
+        }
+        else {
+            $grid[$tmpZ][$tmpX][$tmpY]{'type'} = 'PRO';
+            $grid[$tmpZ][$tmpX][$tmpY]{'sum'}--;
+            $grid[$tmpZ][$tmpX][$tmpY]{'num'}++;
+        }
+        $containsProtein[$tmpZ] = 1; # Make it faster and filter for transmembrane proteins.
+    }
+
+    for (my $z=0; $z<$safeBoxSize{'cooZ'}; $z+=$stepWidth) {
+        next unless $containsProtein[$z];
+        for (my $x=0; $x<$safeBoxSize{'cooX'}; $x+=$stepWidth) {
+            for (my $y=0; $y<$safeBoxSize{'cooY'}; $y+=$stepWidth) {
+                $grid[$z][$x][$y]{'score'} = ($grid[$z][$x][$y]{'sum'} / $grid[$z][$x][$y]{'num'}) if $grid[$z][$x][$y]{'type'} eq 'PRO';
+            }
+        }
+    }
+    ########################################################
+
+
+    ### Fill up protein internal volumes ###################
+    for (my $z=0; $z<$safeBoxSize{'cooZ'}; $z+=$stepWidth) {
+        next unless $containsProtein[$z];
+        for (my $x=0; $x<$safeBoxSize{'cooX'}; $x+=$stepWidth) {
+            for (my $y=0; $y<$safeBoxSize{'cooY'}; $y+=$stepWidth) {
+                next if ($grid[$z][$x][$y]{'type'} eq 'VOX' || $grid[$z][$x][$y]{'type'} eq 'INT');
+                if (my $intGridPointsRef = findProtVoxInY($grid[$z][$x], ($y+$stepWidth), $safeBoxSize{'cooY'}, $stepWidth)) {
+                    for (my $i=0; $i<@{$intGridPointsRef}; $i++) {
+                        $grid[$z][$x][$$intGridPointsRef[$i]]{'type'} = 'INT';
+                    }
+                }
+            }
+        }
+    }
+    ########################################################
+
+
+    ### Create surface profile grid ########################
+    for (my $z=0; $z<$safeBoxSize{'cooZ'}; $z+=$stepWidth) {
+        next unless $containsProtein[$z];
+        for (my $x=0; $x<$safeBoxSize{'cooX'}; $x+=$stepWidth) {
+            for (my $y=0; $y<$safeBoxSize{'cooY'}; $y+=$stepWidth) {
+                if ($grid[$z][$x][$y]{'type'} eq 'PRO') {
+                    $grid[$z][$x][$y+$stepWidth] = getNeighbor($grid[$z][$x][$y], $grid[$z][$x][$y+$stepWidth]);
+                    $grid[$z][$x][$y-$stepWidth] = getNeighbor($grid[$z][$x][$y], $grid[$z][$x][$y-$stepWidth]);
+                    $grid[$z][$x+$stepWidth][$y] = getNeighbor($grid[$z][$x][$y], $grid[$z][$x+$stepWidth][$y]);
+                    $grid[$z][$x-$stepWidth][$y] = getNeighbor($grid[$z][$x][$y], $grid[$z][$x-$stepWidth][$y]);
+                    $grid[$z][$x+$stepWidth][$y+$stepWidth] = getNeighbor($grid[$z][$x][$y], $grid[$z][$x+$stepWidth][$y+$stepWidth]);
+                    $grid[$z][$x+$stepWidth][$y-$stepWidth] = getNeighbor($grid[$z][$x][$y], $grid[$z][$x+$stepWidth][$y-$stepWidth]);
+                    $grid[$z][$x-$stepWidth][$y+$stepWidth] = getNeighbor($grid[$z][$x][$y], $grid[$z][$x-$stepWidth][$y+$stepWidth]);
+                    $grid[$z][$x-$stepWidth][$y-$stepWidth] = getNeighbor($grid[$z][$x][$y], $grid[$z][$x-$stepWidth][$y-$stepWidth]);
+                }
+            }
+        }
+    }
+
+    for (my $z=0; $z<$safeBoxSize{'cooZ'}; $z+=$stepWidth) {
+        next unless $containsProtein[$z];
+        for (my $x=0; $x<$safeBoxSize{'cooX'}; $x+=$stepWidth) {
+            for (my $y=0; $y<$safeBoxSize{'cooY'}; $y+=$stepWidth) {
+                $grid[$z][$x][$y]{'score'} = ($grid[$z][$x][$y]{'sum'} / $grid[$z][$x][$y]{'num'}) if $grid[$z][$x][$y]{'type'} eq 'SUR';
+            }
+        }
+    }
+    ########################################################
+
+
+    ### Print Grid-coordinates #############################
+    grid2File(\@grid, $stepWidth, \%safeBoxSize, $gridOutFile);
+    ########################################################
+
+
+    ### Count z-distribution ###############################
+    for (my $z=0; $z<$safeBoxSize{'cooZ'}; $z+=$stepWidth) {
+        next unless $containsProtein[$z];
+        $gridZCounter[$z] = 0;
+        for (my $x=0; $x<$safeBoxSize{'cooX'}; $x+=$stepWidth) {
+            for (my $y=0; $y<$safeBoxSize{'cooY'}; $y+=$stepWidth) {
+                $gridZCounter[$z] += $grid[$z][$x][$y]{'score'} if $grid[$z][$x][$y]{'type'} eq 'SUR';
+            }
+        }
+    }
+    ########################################################
+
+
+    ### Print out the z-distribution (hydrophilic profile) #
+#    for (my $z=0; $z<$safeBoxSize{'cooZ'}; $z+=$stepWidth) {
+#        my $tmpZCounter = defined($gridZCounter[$z]) ? $gridZCounter[$z] : 2000;
+#        printf("%.3f;%d\n", $z/1000, $tmpZCounter);
+#    }
+    ########################################################
+
+
+    ### Detect hydrophobic belts ###########################
+    my @beltFinder;
+    my %beltHash;
+    my $tmpMaxZ = $stepWidth * $bilayerGridHeight;
+    for (my $z=0; $z<($safeBoxSize{'cooZ'}-$tmpMaxZ); $z+=$stepWidth) {
+        next unless $containsProtein[$z];
+        my $tmpZRangeEnd = $z+$tmpMaxZ-$stepWidth;
+
+#        ### Normalization to the higher bording value ######
+#        if ($gridZCounter[$tmpZRangeEnd]) {
+#            $beltFinder[$z] = ($gridZCounter[$z] > $gridZCounter[$tmpZRangeEnd] ?
+#                $gridZCounter[$z] * -1 :
+#                $gridZCounter[$tmpZRangeEnd] * -1);
+#        }
+#        ####################################################
+
+        for (my $z2=($z+$stepWidth); $z2<$tmpZRangeEnd; $z2+=$stepWidth) {
+            $beltFinder[$z] += $gridZCounter[$z2] if defined($gridZCounter[$z2]);
+        }
+#        printf("%3d :: Range: %d - %d\n", $beltFinder[$z], $z, $tmpZRangeEnd);
+    }
+    ########################################################
+
+
+    ### Filter detected belts ##############################
+    for (my $z=0; $z<@beltFinder; $z+=$stepWidth) {
+        next unless defined($beltFinder[($z+$stepWidth)]);
+        next unless defined($beltFinder[($z-$stepWidth)]);
+#        printf("%3d (%d) :: %d (%d) :: %d (%d)\n", $z, $beltFinder[$z], $z+$stepWidth, $beltFinder[($z+$stepWidth)], $z-$stepWidth, $beltFinder[($z-$stepWidth)]);
+        if ($beltFinder[$z] <= $beltFinder[($z+$stepWidth)] && $beltFinder[$z] <= $beltFinder[($z-$stepWidth)]) {
+            $beltHash{$z . "-" . ($z+$tmpMaxZ-$stepWidth)} = $beltFinder[$z];
+#            printf(" -> Take this one...\n");
+        }
+    }
+    ########################################################
+
+
+    ### Order detected belts ###############################
+    my @orderedRanges = sort {$beltHash{$a} <=> $beltHash{$b}} keys %beltHash;
+#    foreach (@orderedRanges) {
+#        printf("%12s %3d\n", $_, $beltHash{$_});
+#    }
+    ########################################################
+
+
+    ### Calculate the center of each belt ##################
+    for (my $i=0; $i<$nMembranes; $i++) {
+        next unless $orderedRanges[$i];
+        $orderedRanges[$i] =~ /^(\d*\.?\d+([eE][-+]?\d+)?)-(\d*\.?\d+([eE][-+]?\d+)?)$/;
+#        printf("Align bilayer %d to grid range %.3f to %.3f [nm] (Internal belt score: %d)\n", $i+1, ($1/1000), ($3/1000), $beltHash{$orderedRanges[$i]});
+        my $rangeMin = $1 / 1000;
+        my $rangeMax = $3 / 1000;
+        printf("z >= %.3f and z <= %.3f A (Internal belt score: %d)\n", $rangeMin*10, $rangeMax*10, $beltHash{$orderedRanges[$i]});
+        push(@beltZCenters, ($rangeMin + (($rangeMax - $rangeMin)/2)));
+    }
+    print "\n";
+    ########################################################
+
+    return @beltZCenters;
+}
+
+
+
+sub getNeighbor {
+    my $protVoxelRef  = shift;
+    my $neighVoxelRef = shift;
+
+    return $neighVoxelRef if ($$neighVoxelRef{'type'} =~ /(PRO|INT)/);
+
+    $$neighVoxelRef{'type'} = 'SUR';
+    $$neighVoxelRef{'sum'} += $$protVoxelRef{'score'};
+    $$neighVoxelRef{'num'}++;
+    return $neighVoxelRef;
+}
+
+
+
+sub round {
+    my ( $num, $prec ) = @_;
+    return int( $num / $prec + 0.5 - ( $num < 0 ) ) * $prec;
+}
+
+
+
+sub grid2File {
+    my $gridRef      = shift;
+    my $stepWidth    = shift;
+    my $boxSizeRef   = shift;
+    my $gridOutFile  = shift;
+    my $voxId        = 0;
+    my @grid         = @{$gridRef};
+    my %gridGroData;
+
+    for (my $z=0; $z<@grid; $z+=$stepWidth) {
+        next unless $grid[$z];
+        for (my $x=0; $x<@{$grid[$z]}; $x+=$stepWidth) {
+            next unless $grid[$z][$x];
+            for (my $y=0; $y<@{$grid[$z][$x]}; $y+=$stepWidth) {
+                next unless $grid[$z][$x][$y];
+                my $resName = defined($grid[$z][$x][$y]{'score'}) ? $grid[$z][$x][$y]{'score'} : $grid[$z][$x][$y]{'type'};
+                my %tmpCoords = ('cooX' => $x/1000,
+                                 'cooY' => $y/1000,
+                                 'cooZ' => $z/1000);
+                push(@{$gridGroData{'atoms'}}, setCgAtom(++$voxId, $resName, $grid[$z][$x][$y]{'type'}, $voxId, \%tmpCoords));
+            }
+        }
+    }
+    $gridGroData{'title'}  = sprintf("Grid stepwidth = %f", $stepWidth/1000);
+    $gridGroData{'box'}{'cooX'} = $$boxSizeRef{'cooX'}/1000;
+    $gridGroData{'box'}{'cooY'} = $$boxSizeRef{'cooY'}/1000;
+    $gridGroData{'box'}{'cooZ'} = $$boxSizeRef{'cooZ'}/1000;
+    $gridGroData{'atoms'}  = renumAtoms(\@{$gridGroData{'atoms'}});
+    $gridGroData{'nAtoms'} = (scalar(@{$gridGroData{'atoms'}}) - 1);
+    GROFiles::writeGro($gridOutFile, \%gridGroData);
+}
+
+
+
+sub printHelp {
+    print "
+###########################################################################
+                               INFLATEGRO
+                  Written by Christian Kandt, (c) 2005-2010
+
+   Kandt C, Ash WL, Tieleman DP (2007): Setting up and running molecular
+       dynamics simulations of membrane proteins. Methods 41:475-488
+
+                     http://www.csb.bit.uni-bonn.de
+###########################################################################
+
+INFLATEGRO reads the coordinates of a bilayer and inflates them in XY
+directions using a common SCALING FACTOR. To identify the lipids for
+inflating a group in an NDX file must be defined.
+
+Everything else will be centered in the XY plane of the new simulation box.
+
+A DISTANCE CUTOFF in nm can be defined: Only lipids with a P - CA distance
+exceeding that cutoff will be written. It is currently assumed that you're
+actually dealing with phospholipids. However, this can be easily changed in
+the code.
+
+AREA PER LIPID is estimated by caculating the area per protein first.
+This is done using a grid-based approach. A GRID SIZE of 5 A (0.5 nm) was
+found to give good results. Output is written as a 3-collumned ASCII file
+holding three area per lipid values: total, upper leaflet & lower leaflet.
+
+DOUGHNUT mode is a recent extension to INFLATEGRO that might be useful when
+dealing with several peptides at once or multimeric proteins of somewhat
+torrodial (doughnut-like!) shape featuring central lipid-filled cavities.
+It is activated via the >doughnut< flag. If that is set, the protein is no
+longer centered in the XY plane. Instead, inflating now also applies to the
+protein coordinates which are translated laterally in a subunit-dependent
+manner. Protein subunits are defined in an given ndx file.
+
+USAGE: inflategro --igro INPUTGROFILE --ogro OUTPUTGROFILE
+  --igro             Input GRO file (default: \"$protInFile\").
+  --ogro             Output GRO file (default: \"$groOutFile\").
+  -g                 Grid size to detect the area of the protein [nm]  (default: \"$gridSize\").
+  -v                 Be loud and noisy and communicative and meaningful and profound. Seriously!
+  -h, -? or --help   Put out this help.\n\n";
+    exit;
+}
+
+
+
+sub cmdlineParser {
+    my $paramsRef = shift;
+
+    my %knownParam;
+    my @unknownParam;
+
+    for (my $argID=0; $argID<@ARGV; $argID++) {
+        my $cmdlineName = $ARGV[$argID];
+        $knownParam{$ARGV[$argID]} = 0;
+
+        foreach my $paramKey (keys %{$paramsRef}) {
+            my $paramName = $paramKey;
+            my $paramType = 0;
+            my $paramIni  = "--";
+            my $isArray   = 0;
+
+            if ($paramKey =~ /^(.+?)=([\@f])$/) {
+                $paramName = $1;
+                $paramType = $2;
+            }
+
+            $paramIni = "-" if (length($paramName) == 1);
+
+            if ($paramType eq "@") {
+                $isArray = 1;
+            }
+            elsif ($paramType eq "f") {
+                if ($cmdlineName eq $paramIni.$paramName) {
+                    if (ref(${$paramsRef}{$paramKey}) eq "SCALAR") {
+                        ${${$paramsRef}{$paramKey}} = 1;
+                        $knownParam{$cmdlineName} = 1;
+                    }
+                    elsif (ref(${$paramsRef}{$paramKey}) eq "CODE") {
+                        &{${$paramsRef}{$paramKey}}();
+                        $knownParam{$cmdlineName} = 1;
+                    }
+                }
+                next;
+            }
+
+            if ($cmdlineName eq $paramIni.$paramName && not $isArray) {
+                $argID++;
+                next if($ARGV[$argID] =~ /^-/);
+
+                ${${$paramsRef}{$paramKey}} = $ARGV[$argID];
+                $knownParam{$cmdlineName} = 1;
+            }
+            elsif ($ARGV[$argID] eq $paramIni.$paramName && $isArray) {
+                $knownParam{$cmdlineName} = 1;
+                $argID++;
+
+                my @tmpArray;
+                while ($argID <= $#ARGV && not $ARGV[$argID] =~ /^--/ && not $ARGV[$argID] =~ /^-.$/) {
+                    push (@tmpArray, $ARGV[$argID]);
+                    $argID++;
+                }
+                @{${$paramsRef}{$paramKey}} = @tmpArray;
+                $argID--;
+            }
+        }
+
+        if (defined $knownParam{$cmdlineName} && $knownParam{$cmdlineName} == 0) {
+            push(@unknownParam, $cmdlineName) if($cmdlineName =~ /^-/);
+        }
+    }
+
+
+    ### Catch unknown parameters ###########################
+    if (@unknownParam && ${$paramsRef}{"UNKNOWN"} && ref(${$paramsRef}{"UNKNOWN"}) eq "CODE") {
+        print "WARNING: Unknown or non-set parameters detected:\n";
+        for (@unknownParam) { print "        \"$_\"\n"; }
+        &{${$paramsRef}{"UNKNOWN"}}();
+    }
+    elsif (@unknownParam) {
+        print "ERROR: Unknown or non-set parameters detected:\n";
+        for(@unknownParam) { print "       \"$_\"\n"; }
+        exit;
+    }
+    ########################################################
+
+
+    ### Catch no given parameters ##########################
+    if (!@ARGV && ${$paramsRef}{"NOPARAM"} && ref(${$paramsRef}{"NOPARAM"}) eq "CODE") {
+        print "WARNING: Parameters needed...\n";
+        &{${$paramsRef}{"NOPARAM"}}();
+    }
+    ########################################################
+}
+
+
+
+sub buildCgProt {
+    my $coordsRef = shift;
+    my @resAtoms;
+    my @cgCoords;
+
+    ### Group residue atoms ################################
+    for (my $atomId=0; $atomId<@{$coordsRef}; $atomId++) {
+        next unless $$coordsRef[$atomId]{'resId'};
+        push(@{$resAtoms[$$coordsRef[$atomId]{'resId'}]}, $atomId);
+    }
+    ########################################################
+
+
+    ### Get CG-coordinates #################################
+    for (my $resId=0; $resId<@resAtoms; $resId++) {
+        next unless $resAtoms[$resId];
+        my %resGeoCenter = getGeoCenter($resAtoms[$resId], $coordsRef);
+        my $resName = 'UNC';
+        $resName = 'CHA' if $$coordsRef[ $resAtoms[$resId][0] ]{'resName'} =~ /ARG|HIS|LYS|ASP|GLU/;
+        $cgCoords[$resId] = setCgAtom($resId, $resName, $$coordsRef[ $resAtoms[$resId][0] ]{'resName'}, $resId, \%resGeoCenter);
+    }
+    ########################################################
+
+    return \@cgCoords;
+}
+
+
+
+sub setCgAtom {
+    my $resId     = shift;
+    my $resName   = shift;
+    my $atomName  = shift;
+    my $atomNum   = shift;
+    my $coordsRef = shift;
+    my %cgDummyAtom = ('resId'    => $resId,
+                       'resName'  => $resName,
+                       'atomName' => $atomName,
+                       'atomNum'  => $atomNum,
+                       'cooX'     => $$coordsRef{'cooX'},
+                       'cooY'     => $$coordsRef{'cooY'},
+                       'cooZ'     => $$coordsRef{'cooZ'});
+    return \%cgDummyAtom;
+}
+
+
+
+sub getGeoCenter {
+    my $atomIdsRef = shift;
+    my $coordsRef  = shift;
+    my %geoCenter  = ('cooX' => 0,
+                      'cooY' => 0,
+                      'cooZ' => 0);
+
+    foreach (@{$atomIdsRef}) {
+        $geoCenter{'cooX'} += $$coordsRef[$_]{'cooX'};
+        $geoCenter{'cooY'} += $$coordsRef[$_]{'cooY'};
+        $geoCenter{'cooZ'} += $$coordsRef[$_]{'cooZ'};
+    }
+    $geoCenter{'cooX'} /= scalar(@{$atomIdsRef});
+    $geoCenter{'cooY'} /= scalar(@{$atomIdsRef});
+    $geoCenter{'cooZ'} /= scalar(@{$atomIdsRef});
+    return %geoCenter;
+}
+
+
+
+sub renumAtoms {
+    my @renumAtoms;
+    my $atomId = 0;
+    foreach (@{$_[0]}) {
+        next unless $$_{'resId'};
+        $renumAtoms[++$atomId] = $_;
+    }
+    return \@renumAtoms;
+}
+############################################################
+
+
+
+############################################################
+### GROFiles specific part #################################
+############################################################
+package GROFiles;
+
+sub readGro {
+    my $groFile = shift;
+    my %groData;
+
+    print "  ---------------------------------\n  Read GRO file \"$groFile\"...\r";
+    open(GROFILE, "<$groFile") || die "ERROR: Cannot open GRO file \"$groFile\": $!\n";
+    readHeader(\*GROFILE, \%groData);
+    readCoords(\*GROFILE, \%groData);
+    readFooter(\*GROFILE, \%groData);
+    close(GROFILE);
+    print "  Read GRO file \"$groFile\": Finished\n  ---------------------------------\n\n";
+
+    return %groData;
+}
+
+
+
+sub readHeader {
+    my $fileHandle = shift;
+    my $groDataRef = shift;
+
+    $$groDataRef{'title'}  = <$fileHandle>;
+    $$groDataRef{'title'}  =~ s/(^\s*)|(\s*$)//g;
+    $$groDataRef{'nAtoms'} = <$fileHandle>;
+    $$groDataRef{'nAtoms'} =~ s/\s//g;
+
+    print "\n    Number of Atoms: " . $$groDataRef{'nAtoms'} . "\n" if $main::verbose;
+}
+
+
+
+sub readFooter {
+    my $fileHandle = shift;
+    my $groDataRef = shift;
+    my $verbose    = shift || 0;
+
+    $$groDataRef{'footline'} = <$fileHandle>;
+    $$groDataRef{'footline'} =~ s/(^\s*)|(\s*$)//g;
+    if ($$groDataRef{'footline'} =~ /([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)/) {
+        $$groDataRef{'box'}{'cooX'} = $1;
+        $$groDataRef{'box'}{'cooY'} = $3;
+        $$groDataRef{'box'}{'cooZ'} = $5;
+
+        print "\n    Boxsize: x=$1, y=$3, z=$5\n" if $main::verbose;
+    }
+}
+
+
+
+sub readCoords {
+    my $fileHandle = shift;
+    my $groDataRef = shift;
+    my $atomId     = 0;
+
+    while (<$fileHandle>) {
+        chomp($_);
+        $$groDataRef{'atoms'}[++$atomId] = getAtomdata($_) unless ($_ =~ /^\s*$/);
+        print "    Read atom data:  $atomId\r" if $main::verbose;
+        return 1 if ($atomId == $$groDataRef{'nAtoms'});
+    }
+    return 0; # If file ends before all atoms were count.
+}
+
+
+
+sub getAtomdata {
+    my $atomStr = shift;
+    my $strLen  = length($atomStr);
+    my %atomData;
+
+    $atomData{'resId'}    = checkSubstr($atomStr, $strLen,  0, 5);
+    $atomData{'resName'}  = checkSubstr($atomStr, $strLen,  5, 5);
+    $atomData{'atomName'} = checkSubstr($atomStr, $strLen, 10, 5);
+    $atomData{'atomNum'}  = checkSubstr($atomStr, $strLen, 15, 5);
+    $atomData{'cooX'}     = checkSubstr($atomStr, $strLen, 20, 8);
+    $atomData{'cooY'}     = checkSubstr($atomStr, $strLen, 28, 8);
+    $atomData{'cooZ'}     = checkSubstr($atomStr, $strLen, 36, 8);
+    $atomData{'velX'}     = checkSubstr($atomStr, $strLen, 44, 8);
+    $atomData{'velY'}     = checkSubstr($atomStr, $strLen, 52, 8);
+    $atomData{'velZ'}     = checkSubstr($atomStr, $strLen, 60, 8);
+
+    return \%atomData;
+}
+
+
+
+sub checkSubstr {
+    my $str       = shift;
+    my $strLen    = shift;
+    my $start     = shift;
+    my $substrLen = shift;
+    my $substr    = '';
+
+    if ($strLen >= ($start+$substrLen)) {
+        $substr = substr($str, $start, $substrLen);
+        $substr =~ s/\s//g;
+    }
+    return $substr;
+}
+
+
+
+sub writeGro {
+    my $groFile    = shift;
+    my $groDataRef = shift;
+
+    open(GROFILE, ">$groFile") || die "ERROR: Cannot open GRO file ($groFile): $!\n";
+    writeHeader(\*GROFILE, $groDataRef);
+    writeCoords(\*GROFILE, $groDataRef);
+    writeFooter(\*GROFILE, $groDataRef);
+    close(GROFILE);
+}
+
+
+
+sub writeHeader {
+    my $fileHandle = shift;
+    my $groDataRef = shift;
+
+    print $fileHandle $$groDataRef{'title'} . "\n";
+    print $fileHandle $$groDataRef{'nAtoms'} . "\n";
+}
+
+
+
+sub writeFooter {
+    my $fileHandle = shift;
+    my $groDataRef = shift;
+
+    printf($fileHandle "  %8.5f  %8.5f  %8.5f\n", $$groDataRef{'box'}{'cooX'}, $$groDataRef{'box'}{'cooY'}, $$groDataRef{'box'}{'cooZ'});
+}
+
+
+
+sub writeCoords {
+    my $fileHandle = shift;
+    my $groDataRef = shift;
+
+    foreach (@{$$groDataRef{'atoms'}}) {
+        next unless $$_{'resId'};
+        printf($fileHandle "%5d%-5s%5s%5d%8.3f%8.3f%8.3f\n",
+            ($$_{'resId'}%100000), $$_{'resName'}, $$_{'atomName'}, ($$_{'atomNum'}%100000), $$_{'cooX'}, $$_{'cooY'}, $$_{'cooZ'});
+    }
+}
+############################################################
+
+
+
+###############################################################################
+### NDXFiles specific part ####################################################
+###############################################################################
+package NDXFiles;
+
+sub readNdx {
+    my $ndxFile = shift;
+    my @ndxData;
+    my $groupId = -1;
+    
+    my $tmpAtomList = '';
+
+    print "  ---------------------------------\n  Read NDX file \"$ndxFile\"...\r";
+    print "\n" if $main::verbose;
+    open(NDXFILE, "<$ndxFile") || die "ERROR: Cannot open NDX file \"$ndxFile\": $!\n";
+    while (<NDXFILE>) {
+        if ($_ =~ /^\s*((\d+\s+)+)/) {
+            my @tmpArray = split(/\s+/, $1);
+            push(@{$ndxData[$groupId]{'atoms'}}, @tmpArray);
+        }
+        elsif ($_ =~ /^\s*\[\s*(.+?)\s*\]\s*$/) {
+            $ndxData[++$groupId]{'groupName'} = $1;
+            @{$ndxData[$groupId]{'atoms'}} = ();
+            print "    Found " . ($groupId + 1) . " groups\r" if $main::verbose;
+        }
+    }
+    print "\n" if $main::verbose;
+    close NDXFILE;
+    print "  Read NDX file \"$ndxFile\": Finished\n  ---------------------------------\n\n";
+
+    return @ndxData;
+}
+
+
+
+sub printNdxGroups {
+    for(my $i=0; $i<@_; $i++) {
+        printf("%3d %-20s: %5d atoms\n", $i, $_[$i]{'groupName'}, scalar(@{$_[$i]{'atoms'}}));
+    }
+}
+
+
+
+sub writeNdx {
+    my $ndxFile    = shift;
+    my $ndxDataRef = shift;
+
+    open(NDXFILE, ">$ndxFile") or die "ERROR: Cannot open output NDX file ($ndxFile): $!\n";
+    for (my $groupId=0; $groupId<@{$ndxDataRef}; $groupId++) {
+        printf(NDXFILE "[ %s ]", $$ndxDataRef[$groupId]{'groupName'});
+
+        for (my $i=0; $i<@{$$ndxDataRef[$groupId]{'atoms'}}; $i++) {
+            $i % 15 ? print NDXFILE " " : print NDXFILE "\n";
+            printf(NDXFILE "%4d", $$ndxDataRef[$groupId]{'atoms'}[$i]);
+        }
+        print NDXFILE "\n";
+        print NDXFILE "\n" unless @{$$ndxDataRef[$groupId]{'atoms'}};
+    }
+    close NDXFILE;
+}
+################################################################################

@@ -1,0 +1,35 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+my $epsFile = shift;
+my $pdfFile = shift;
+
+my $dDeviceWidths = "";
+my $dDeviceHeight = "";
+
+exit unless $epsFile;
+
+unless ($pdfFile) {
+    $pdfFile = $epsFile;
+    $pdfFile =~ s/\.eps$/\.pdf/;
+}
+
+print "$epsFile $pdfFile\n";
+
+
+open(EPSFILE, "<$epsFile") || die "ERROR: Cannot open EPS file \"$epsFile\": $!\n";
+my @temp = grep { /\%\%BoundingBox:/ } <EPSFILE>;
+close(EPSFILE);
+
+if ($temp[0] =~ /\%\%BoundingBox:\s*([-+]?[0-9]+)\s+([-+]?[0-9]+)\s+([-+]?[0-9]+)\s+([-+]?[0-9]+)\s*/) {
+    $dDeviceWidths = $3;
+    $dDeviceHeight = $4;
+}
+else {
+    print "ERROR: Cannot find the size dimensions. Sorry...\n";
+}
+
+system("ps2pdf -dDEVICEWIDTHPOINTS=$dDeviceWidths -dDEVICEHEIGHTPOINTS=$dDeviceHeight $epsFile $pdfFile");
+system("acroread $pdfFile");
+

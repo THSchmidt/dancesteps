@@ -1,0 +1,122 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+my $fileName = shift;
+
+my %chainIds;
+
+my @tmpArray = read_pdb($fileName);
+my @atoms = @{$tmpArray[0]};
+foreach (@atoms) {
+    $chainIds{$$_{'chainID'}}++ if $$_{'chainID'};
+}
+
+foreach my $chainId (sort keys %chainIds) {
+    print $chainId . "\n";
+}
+
+
+sub read_pdb {
+    my $pdbFile = shift;
+    my $keyConvHashRef = shift;
+
+    my %keyConvHash = ("serial" => "serial",
+                       "name" => "name",
+                       "altLoc" => "altLoc",
+                       "resName" => "resName",
+                       "chainID" => "chainID",
+                       "resSeq" => "resSeq",
+                       "iCode" => "iCode",
+                       "x" => "x",
+                       "y" => "y",
+                       "z" => "z",
+                       "occupancy" => "occupancy",
+                       "tempFactor" => "tempFactor",
+                       "element" => "element",
+                       "charge" => "charge");
+
+    if($keyConvHashRef) {
+        my %tmpHash = %{$keyConvHashRef};
+        foreach my $key (keys %{$keyConvHashRef}) {
+            $keyConvHash{$key} = $tmpHash{$key};
+        }
+    }
+
+    my @atoms;
+    my $infoString = "  ---------------------------------\n";
+
+#    print "  Reading PDB-File \"$pdbFile\"...\r";
+
+    open(PDBFILE, "<$pdbFile") or die "ERROR: Cannot open PDB File ($pdbFile): $!";
+    while(<PDBFILE>) {
+        chomp ($_);
+        if ($_ =~ /^ATOM\s+/) {
+            my %tmpHash = get_atomdata($_, \%keyConvHash);
+            %{$atoms[$tmpHash{$keyConvHash{"serial"}}]} = %tmpHash;
+        }
+    }
+    close(PDBFILE);
+
+
+    my $numAtoms = @atoms;
+    $infoString .= "  Number of Atoms: ".(--$numAtoms)."\n";
+    $infoString .= "  ---------------------------------\n";
+
+#    print "                                                    \r";
+
+    ### Check Values ####################################
+#     for(my $i=0; $i<@atoms; $i++) {
+#         foreach my $key (sort keys %{$atoms[$i]}) {
+#             print $key." ".$atoms[$i]{$key}."\n";
+#         }
+#         print "\n";
+#     }
+    #####################################################
+
+    return (\@atoms, $numAtoms, $infoString);
+}
+
+
+sub get_atomdata {
+    my $atomStr = shift;
+    my $keyConvHashRef = shift;
+
+    my %keyConvHash = %{$keyConvHashRef};
+
+    my $strLen = length($atomStr);
+
+    my %atomData;
+    $atomData{$keyConvHash{"serial"}} = check_substr($atomStr, $strLen, 6, 5);
+    $atomData{$keyConvHash{"name"}} = check_substr($atomStr, $strLen, 12, 4);
+    $atomData{$keyConvHash{"altLoc"}} = check_substr($atomStr, $strLen, 16, 1);
+    $atomData{$keyConvHash{"resName"}} = check_substr($atomStr, $strLen, 17, 3);
+    $atomData{$keyConvHash{"chainID"}} = check_substr($atomStr, $strLen, 21, 1);
+    $atomData{$keyConvHash{"resSeq"}} = check_substr($atomStr, $strLen, 22, 4);
+    $atomData{$keyConvHash{"iCode"}} = check_substr($atomStr, $strLen, 26, 1);
+    $atomData{$keyConvHash{"x"}} = check_substr($atomStr, $strLen, 30, 8);
+    $atomData{$keyConvHash{"y"}} = check_substr($atomStr, $strLen, 38, 8);
+    $atomData{$keyConvHash{"z"}} = check_substr($atomStr, $strLen, 46, 8);
+    $atomData{$keyConvHash{"occupancy"}} = check_substr($atomStr, $strLen, 54, 6);
+    $atomData{$keyConvHash{"tempFactor"}} = check_substr($atomStr, $strLen, 60, 6);
+    $atomData{$keyConvHash{"element"}} = check_substr($atomStr, $strLen, 76, 2);
+    $atomData{$keyConvHash{"charge"}} = check_substr($atomStr, $strLen, 78, 2);
+    return %atomData;
+}
+
+
+sub check_substr {
+    my $str = shift;
+    my $strLen = shift;
+    my $start = shift;
+    my $subStrLen = shift;
+
+    my $subStr = "";
+
+    if($strLen >= ($start+$subStrLen)) {
+        $subStr = substr($str, $start, $subStrLen);
+        $subStr =~ s/\s//g;
+    }
+    return $subStr;
+}
+

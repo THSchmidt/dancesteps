@@ -1,0 +1,270 @@
+#!/usr/bin/perl -w
+
+# Copyright 2013 Thomas H. Schmidt
+#
+# This file is part of DanceSteps.
+#
+# DanceSteps is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# any later version.
+#
+# DanceSteps is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+### Load Packages ##############################################################
+use strict;
+use IO::Handle;
+use FindBin qw($RealBin); # Absolute path to THIS script.
+use lib ($RealBin."/modules/FileIO", $RealBin."/modules");
+autoflush STDOUT 1; # For direct output.
+
+use Commandline;
+use FileIO::Ndx;
+use FileIO::Xvg;
+################################################################################
+
+
+
+### Default Parameters #########################################################
+our $version        = "rc1";              # Version number.
+our $year           = "2013";             # Year (of change).
+
+our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
+
+my $coordInFile     = 'system.gro';       # Input coordinates file.
+my $xtcInFile       = 'traj.xtc';         # Input trajectory file.
+my $ndxInFile       = '';                 # Input GROMACS index file.
+
+my %timeRange;
+$timeRange{'range'}{'min'}  = 20000;      # Start analyzing trajectory after >$trajBegin< ps.
+$timeRange{'range'}{'max'}  = '';
+$timeRange{'range'}{'step'} = '';
+
+my $nCycles = 30;                 # The number of iteration steps for determining the average structure.
+my @cycleRmsdVals;
+my $rmsdValOut   = "cycles.rmsd.xvg";
+
+my $helpAndQuit     = 0;                  # Print out program help.
+################################################################################
+
+
+
+### Internal parameters ########################################################
+my @ndxData;             # Filled by "NDXFiles::readNdx(<NDXFILE>)".
+my @ndxAnalysisGroupIds; # Filled by "FileIO::NDX::selectGroupIds;
+my @ndxOutputGroupIds;   # Filled by "FileIO::NDX::selectGroupIds;
+my $gConfrmsFile = "gConfrms.dat";
+my $logFile   = "avgstructure.log";
+################################################################################
+
+
+
+### Print out program headlines ################################################
+printHead();
+################################################################################
+
+
+
+### Handle commandline parameters ##############################################
+addCmdlParam('scalar', 's',       'Input',       \$coordInFile,                $coordInFile, 'Structure file: gro g96 pdb tpr etc.');
+addCmdlParam('scalar', 'f',       'Input',       \$xtcInFile,                  $xtcInFile, 'Trajectory file: xtc trr trj gro g96 pdb cpt');
+addCmdlParam('scalar', 'n',       'Input',       \$ndxInFile,                  $ndxInFile, 'Index file');
+addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
+addCmdlParam('scalar', 'b',       'time',        \$timeRange{'range'}{'min'},  ($timeRange{'range'}{'min'} ? $timeRange{'range'}{'min'} : 'no'), 'First frame (ps) to read from trajectory');
+#addCmdlParam('scalar', 'e',       'time',        \$timeRange{'range'}{'max'},  $timeRange{'range'}{'max'} ? $timeRange{'range'}{'max'} : 0, 'Last frame (ps) to read from trajectory');
+#addCmdlParam('scalar', 'dt',      'time',        \$timeRange{'range'}{'step'}, $timeRange{'range'}{'step'} ? $timeRange{'range'}{'step'} : 0, '');
+addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
+
+cmdlParser();
+################################################################################
+
+
+
+### Print program help if the user set the flag ################################
+printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
+################################################################################
+
+
+
+### Read the NDX file ##########################################################
+if ($ndxInFile) {
+    @ndxData = FileIO::NDX::readNdx($ndxInFile); # Read input NDX file.
+    die "ERROR: Cannot find NDX data.\n" unless (@ndxData);
+    FileIO::NDX::printNdxGroups(@ndxData);
+    @ndxAnalysisGroupIds = FileIO::NDX::selectGroupIds(\@ndxData, 'determining the average structure', 1);
+    @ndxOutputGroupIds = FileIO::NDX::selectGroupIds(\@ndxData, 'output', 1);
+}
+else {
+    printHelp();
+}
+################################################################################
+
+
+
+### Get the average structure per group ########################################
+for (my $i=0; $i<@ndxAnalysisGroupIds; $i++) {
+    my $anaGroupName   = $ndxData[ $ndxAnalysisGroupIds[$i] ]{'groupName'};
+    my $outGroupName   = $ndxData[ $ndxOutputGroupIds[$i] ]{'groupName'};
+#
+    print "$anaGroupName -> $outGroupName\n";
+
+
+    ### Preparation ############################################################
+    my $thisAvgStruct = sprintf("%s.avg.%02d.pdb", $anaGroupName, 0);
+    system("echo " . $ndxAnalysisGroupIds[$i] . " | trjconv -s $coordInFile -f $xtcInFile -n $ndxInFile -o " . $anaGroupName . ".selected.xtc -b " . $timeRange{'range'}{'min'} . " -pbc nojump >>$logFile 2>&1"); # Extract the selected atoms over time.
+    system("echo " . $ndxAnalysisGroupIds[$i] . " | g_rmsf -s $coordInFile -f $xtcInFile -n $ndxInFile -ox $thisAvgStruct -fit >>$logFile 2>&1");
+    system("rm rmsf.xvg"); # Clean up.
+    ############################################################################
+
+
+    ### Do the cycles for averaging ############################################
+    for (my $i=1; $i<$nCycles; $i++) {
+        my $prevAvgStruct = $thisAvgStruct;
+        $thisAvgStruct = sprintf("%s.avg.%02d.pdb", $anaGroupName, $i);
+
+        system("echo 0 | g_rmsf -s $prevAvgStruct -f " . $anaGroupName . ".selected.xtc -ox $thisAvgStruct -fit >>$logFile 2>&1");
+        system("echo 0 0 | g_confrms -f1 $prevAvgStruct -f2 $thisAvgStruct >$gConfrmsFile 2>>$logFile");
+
+        my $rmsd = getRmsdVal($gConfrmsFile);
+        push(@cycleRmsdVals, $rmsd);
+        $i = $nCycles if $rmsd < 0.00001; # Sharp enough?
+
+        system("rm fit.pdb rmsf.xvg $gConfrmsFile"); # Clean up.
+    }
+    ############################################################################
+
+
+    ### Write cycle output to a file ###########################################
+    open(CYCLERMSD, ">$rmsdValOut") || die "ERROR: Cannot open output file \"$rmsdValOut\": $!\n";
+    for (my $j=0; $j<@cycleRmsdVals; $j++) {
+        print CYCLERMSD "$j $cycleRmsdVals[$j]\n";
+    }
+    close(CYCLERMSD);
+    ############################################################################
+
+
+    ### Find the conformation most similar to the average ######################
+    system("echo 0 0 | g_rms -s $thisAvgStruct -f " . $anaGroupName . ".selected.xtc -o rmsd.xvg -fit rot+trans >>$logFile 2>&1"); # Exeute g_rms.
+
+    my %xvgData = FileIO::XVG::readXvg('rmsd.xvg'); # Read the XVG file.
+
+    my @sorted = sort { $a->[1] <=> $b->[1] } @{$xvgData{'values'}}; # Find the lowest rmsd.
+    print "Lowest RMSD = " . $sorted[0][1] . " (at " . $sorted[0][0] . " ps)\n";
+
+    system("echo " . $ndxOutputGroupIds[$i] . " | trjconv -s $coordInFile -f $xtcInFile -n $ndxInFile -o " . $outGroupName . ".close2avg.gro -dump " . $sorted[0][0] . " >>$logFile 2>&1\n"); # Extract the frame.
+    ############################################################################
+}
+################################################################################
+
+
+
+################################################################################
+### Subroutines ################################################################
+################################################################################
+sub printHead {
+    my @headLines = ("################################################################################",
+                     "",
+                     "get_avgstructure $version",
+                     "Determination of the average structure of a trajectory.",
+                     "Copyright Thomas H. Schmidt, $year",
+                     "",
+                     "http://code.google.com/p/dancesteps",
+                     "",
+                     "get_avgstructure comes with ABSOLUTELY NO WARRANTY.",
+                     "This is free software, and you are welcome to redistribute it",
+                     "under certain conditions; type `-copyright' for details.",
+                     "",
+                     "################################################################################");
+    my $maxLength = 80;
+    foreach (@headLines) {
+        $maxLength = (length $_ > $maxLength) ? length($_) : $maxLength;
+    }
+
+    foreach (@headLines) {
+        printf "%s%-${maxLength}s\n", ' ' x int(($maxLength - length($_))/2), $_;
+    }
+}
+
+
+
+sub printFoot {
+    print <<EndOfFoot;
+Please cite:
+  [1] Schmidt, T. H. DanceSteps: Dirty toolkit for Molecular Modeling (Manual)
+      http://code.google.com/p/dancesteps
+
+EndOfFoot
+}
+
+
+
+sub printHelp {
+    my $cmdLParamRef   = shift;
+    my $quitAfterPrint = shift;
+
+
+    print <<EndOfHelp;
+DESCRIPTION
+-----------
+get_avgstructure reads a GROMACS compatible structure file (GRO, PDB, TPR), a
+corresponding trajectory (XTC, TRR) and index file (NDX) and determines the
+conformation most similar to the average structure (MS2AS) by an iterative fit
+to the previously found MS2AS.
+
+USAGE: get_avgstructure -s TPRFILE -f XTCFILE -n NDXFILE
+
+EndOfHelp
+
+    printParamHelp($cmdLParamRef);
+
+    printFoot();
+
+    exit if $quitAfterPrint;
+}
+
+
+
+sub printCopyright {
+    print <<"EndOfCopyright";
+This file is part of DanceSteps.
+
+DanceSteps is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+any later version.
+
+DanceSteps is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+EndOfCopyright
+    exit;
+}
+
+
+
+sub getRmsdVal {
+    my $gConfrmsFile = shift;
+    my $rmsd;
+
+    open(OUTFILE, "<$gConfrmsFile") || die "ERROR: Cannot open file \"$gConfrmsFile\": $!\n";
+    while (<OUTFILE>) {
+        $rmsd = $1 if ($_ =~ /^\s*Root mean square deviation after lsq fit = ([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)/);
+    }
+    close(OUTFILE);
+
+    return $rmsd;
+}

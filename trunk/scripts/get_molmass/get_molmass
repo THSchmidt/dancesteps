@@ -1,0 +1,27 @@
+#!/usr/bin/perl -w
+
+use strict;
+use IO::Handle;
+autoflush STDOUT 1; # For direct output.
+
+my $inputFile = shift;
+my $mass = 0;
+my $counter = 0;
+my $search = 0;
+
+open(INFILE, "<$inputFile") || die "ERROR: Cannot open file \"$inputFile\": $!\n";
+while (<INFILE>) {
+    if ($_ =~ /^\s*\[\s*.+\s*\]\s*$/) {
+        $search = $_ =~ /^\s*\[\s*atoms\s*\]\s*$/ ? 1 : 0;
+    }
+    next unless $search;
+    if ($_ =~ /^\s*\d+\s+.+\s+\d+\s+.+\s+.+\s+\d+\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)/) {
+        $mass += $3;
+        $counter++;
+        printf("Mass: %.3f  g/mol (atom %d)\r", $mass, $counter);
+    }
+}
+close(INFILE);
+
+printf("\rMass: %.5f g/mol = %.2f kDa (%d atoms)\n", $mass, ($mass/1000), $counter);
+
