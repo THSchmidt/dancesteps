@@ -1,0 +1,103 @@
+#!/usr/bin/perl -w
+
+use strict;
+use FindBin qw($Bin); # Absolute path to THIS script.
+
+my @fileNames = @ARGV;
+
+
+foreach (@fileNames) {
+    my $pdbFile   = $_;
+    $pdbFile      =~ /(.{4})\.pdb\s*$/;
+    my $pdbId     = $1;
+    my $chainsStr = qx($Bin/getpdbchains $_);
+    my @chains    = split("\n", $chainsStr);
+    my $ndxFile   = "temp.ndx";
+
+    for (my $i=0; $i<@chains; $i++) {
+        next unless $chains[$i] =~ /^\s*[A-Z]\s*$/;
+#        write_makeNdxAnswerFile("temp.make_ndx.answers", "q\n");
+        system("echo q | make_ndx -f $pdbFile -o $ndxFile");
+
+
+        my @ndxData = NDXFiles::read($ndxFile); # Read input NDX file.
+        my $proteinNdxGroup = NDXFiles::getGroupByName(\@ndxData, '^\s*Protein\s*$');
+
+        if (defined $proteinNdxGroup) {
+            write_makeNdxAnswerFile("temp.make_ndx.answers", "$proteinNdxGroup & chain " . $chains[$i] .  "\nq\n");
+            system("make_ndx -f $pdbFile -o $ndxFile <temp.make_ndx.answers");
+
+            system("echo " . scalar(@ndxData) . " | editconf -f $pdbFile -n $ndxFile -o " . $pdbId . "_chain" . $chains[$i] . ".pdb");
+
+            system("babel -ipdb " . $pdbId . "_chain" . $chains[$i] . ".pdb -ofasta " . $pdbId . "_chain" . $chains[$i] . ".fasta");
+        }
+        system("rm temp.make_ndx.answers $ndxFile \\#" . $ndxFile . "*");
+    }
+}
+
+
+
+sub write_makeNdxAnswerFile {
+    my $answersFile = shift;
+    my $answersStr  = shift;
+
+    open(ANSWFILE, ">$answersFile") || die "ERROR: Cannot open file \"answersFile\": $!\n";
+    print ANSWFILE $answersStr;
+    close(ANSWFILE);
+}
+
+
+
+###############################################################################
+### NDXFiles specific part ####################################################
+###############################################################################
+package NDXFiles;
+
+sub read {
+    my $ndxFile = shift;
+    my @ndxData;
+    my $groupId = -1;
+    
+    my $tmpAtomList = '';
+
+    print "  ---------------------------------\n  Read NDX file \"$ndxFile\"...\r";
+    print "\n" if $main::verbose;
+    open(NDXFILE, "<$ndxFile") || die "ERROR: Cannot open NDX file \"$ndxFile\": $!\n";
+    while (<NDXFILE>) {
+        if ($_ =~ /^\s*((\d+\s+)+)/) {
+            my @tmpArray = split(/\s+/, $1);
+            push(@{$ndxData[$groupId]{'atoms'}}, @tmpArray);
+        }
+        elsif ($_ =~ /^\s*\[\s*(.+?)\s*\]\s*$/) {
+            $ndxData[++$groupId]{'groupName'} = $1;
+            @{$ndxData[$groupId]{'atoms'}} = ();
+            print "    Found " . ($groupId + 1) . " groups\r" if $main::verbose;
+        }
+    }
+    print "\n" if $main::verbose;
+    close NDXFILE;
+    print "  Read NDX file \"$ndxFile\": Finished\n  ---------------------------------\n\n";
+
+    return @ndxData;
+}
+
+
+
+sub printGroups {
+    for(my $i=0; $i<@_; $i++) {
+        printf("%3d %-20s: %5d atoms\n", $i, $_[$i]{'groupName'}, scalar(@{$_[$i]{'atoms'}}));
+    }
+}
+
+
+
+sub getGroupByName {
+    my $ndxDataRef        = shift;
+    my $ndxGroupNameRegex = shift;
+    for(my $i=0; $i<@$ndxDataRef; $i++) {
+        return $i if $$ndxDataRef[$i]{'groupName'} =~ /$ndxGroupNameRegex/;
+    }
+    return;
+}
+################################################################################
+

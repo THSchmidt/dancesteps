@@ -1,0 +1,259 @@
+#!/usr/bin/perl -w
+
+# Copyright 2013 Thomas H. Schmidt
+#
+# This file is part of DanceSteps.
+#
+# DanceSteps is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# any later version.
+#
+# DanceSteps is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+### Load Packages ##############################################################
+use strict;
+use IO::Handle;
+use FindBin qw($RealBin); # Absolute path to THIS script.
+use lib ($RealBin."/modules/FileIO", $RealBin."/modules");
+autoflush STDOUT 1; # For direct output.
+
+use Commandline;
+use FileIO::Gro;
+use FileIO::Ndx;
+################################################################################
+
+
+
+### Default Parameters #########################################################
+our $version        = "rc1";              # Version number.
+our $year           = "2013";             # Year (of change).
+
+our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
+
+my $groInFile       = 'conf.gro';         # Input GROMACS coordinates file.
+my $ndxInFile       = 'index.ndx';        # Input GROMACS index file.
+my $ndxOutFile      = 'leaflets.ndx';     # Output GROMACS index file.
+
+
+my $helpAndQuit     = 0;                  # Print out program help.
+################################################################################
+
+
+
+### Internal parameters ########################################################
+my %groData;             # Filled by "FileIO::GRO::readGro(<NDXFILE>)".
+my @ndxData;             # Filled by "FileIO::NDX::readNdx(<NDXFILE>)".
+my @ndxGroupIds;         # Filled by "FileIO::NDX::selectGroupIds;
+#my @ndxOutputGroupIds;   # Filled by "FileIO::NDX::selectGroupIds;
+################################################################################
+
+
+
+### Print out program headlines ################################################
+printHead();
+################################################################################
+
+
+
+### Handle commandline parameters ##############################################
+addCmdlParam('scalar', 'f',       'Input',       \$groInFile,                  $groInFile, 'Structure file: gro');
+addCmdlParam('scalar', 'n',       'Input',       \$ndxInFile,                  $ndxInFile, 'Index file');
+addCmdlParam('scalar', 'o',       'Output',      \$ndxOutFile,                 $ndxOutFile, 'Index file');
+addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
+addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
+
+cmdlParser();
+################################################################################
+
+
+
+### Print program help if the user set the flag ################################
+printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
+################################################################################
+
+
+
+### Read the GRO file ##########################################################
+%groData = FileIO::GRO::readGro($groInFile); # Read input GRO file.
+###############################################################################
+
+
+
+### Read the NDX file ##########################################################
+if ($ndxInFile) {
+    @ndxData = FileIO::NDX::readNdx($ndxInFile); # Read input NDX file.
+    die "ERROR: Cannot find NDX data.\n" unless (@ndxData);
+    FileIO::NDX::printNdxGroups(@ndxData);
+    @ndxGroupIds = FileIO::NDX::selectGroupIds(\@ndxData, 'the membrane', 1);
+}
+else {
+    printHelp();
+}
+################################################################################
+my @zCoordsPerUResId;
+my @zMean;
+
+
+### Run through the NDX groups #################################################
+for (my $i=0; $i<@ndxGroupIds; $i++) {
+    my $ndxGroupName = $ndxData[ $ndxGroupIds[$i] ]{'groupName'};
+
+    ### Determine the geometrical z-center of each residue and the bilayer #####
+    foreach (@{$ndxData[ $ndxGroupIds[$i] ]{'atoms'}}) {
+        push(@{$zCoordsPerUResId[ $groData{'atoms'}[$_]{'uResId'} ]}, $groData{'atoms'}[$_]{'cooZ'});
+    }
+    my $bilayerZCenter;
+    my $nUResIds = 0;
+    for (my $j=0; $j<@zCoordsPerUResId; $j++) {
+        next unless $zCoordsPerUResId[$j];
+        $bilayerZCenter += $zMean[$j] = getArrayMean($zCoordsPerUResId[$j]);
+        $nUResIds++;
+    }
+    $bilayerZCenter /= $nUResIds;
+    print "  $ndxGroupName center (z coordinate): $bilayerZCenter\n";
+    ############################################################################
+
+
+    ### Separate the leaflets by grouping per residue ##########################
+    my @upperUResIds;
+    my @lowerUResIds;
+    for (my $j=0; $j<@zMean; $j++) {
+        next unless $zCoordsPerUResId[$j];
+        $zMean[$j] < $bilayerZCenter ? $lowerUResIds[$j] = 1 : $upperUResIds[$j] = 1;
+    }
+#    print "Upper: " . scalar(@upperUResIds
+
+    my @upperAtomIds;
+    my @lowerAtomIds;
+    foreach (@{$ndxData[ $ndxGroupIds[$i] ]{'atoms'}}) {
+        push(@upperAtomIds, $_) if $upperUResIds[ $groData{'atoms'}[$_]{'uResId'} ];
+        push(@lowerAtomIds, $_) if $lowerUResIds[ $groData{'atoms'}[$_]{'uResId'} ];
+    }
+
+    my %tmpHashUpper = ('groupName' => $ndxGroupName . '_upper',
+                        'atoms'     => \@upperAtomIds);
+    push(@ndxData, \%tmpHashUpper);
+
+    my %tmpHashLower = ('groupName' => $ndxGroupName . '_lower',
+                        'atoms'     => \@lowerAtomIds);
+    push(@ndxData, \%tmpHashLower);
+    ############################################################################
+}
+################################################################################
+
+
+
+### Write out all NDX groups ###################################################
+FileIO::NDX::writeNdx($ndxOutFile, \@ndxData);
+################################################################################
+
+
+
+
+################################################################################
+### Subroutines ################################################################
+################################################################################
+sub printHead {
+    my @headLines = ("################################################################################",
+                     "",
+                     "leaflets2ndx $version",
+                     "Analyzes a membrane and creates two NDX groups",
+                     "each containing the atoms of a bilayer leaflet.",
+                     "Copyright Thomas H. Schmidt, $year",
+                     "",
+                     "http://code.google.com/p/dancesteps",
+                     "",
+                     "leaflet2ndx comes with ABSOLUTELY NO WARRANTY.",
+                     "This is free software, and you are welcome to redistribute it",
+                     "under certain conditions; type `-copyright' for details.",
+                     "",
+                     "################################################################################");
+    my $maxLength = 80;
+    foreach (@headLines) {
+        $maxLength = (length $_ > $maxLength) ? length($_) : $maxLength;
+    }
+
+    foreach (@headLines) {
+        printf "%s%-${maxLength}s\n", ' ' x int(($maxLength - length($_))/2), $_;
+    }
+}
+
+
+
+sub printFoot {
+    print <<EndOfFoot;
+Please cite:
+  [1] Schmidt, T. H. DanceSteps: Dirty toolkit for Molecular Modeling (Manual)
+      http://code.google.com/p/dancesteps
+
+EndOfFoot
+}
+
+
+
+sub printHelp {
+    my $cmdLParamRef   = shift;
+    my $quitAfterPrint = shift;
+
+
+    print <<EndOfHelp;
+DESCRIPTION
+-----------
+leaflets2ndx determines the atoms of each bilayer leaflet and creates an NDX
+group of each. Therefor leaflets2ndx reads a GROMACS coordinates file (GRO)
+and a corresponding index file (NDX) comrpising the atoms of the lipid bilayer.
+
+USAGE: leaflets2ndx -f GROFILE -n NDXFILE -o LEAFLNDXFILE
+
+EndOfHelp
+
+    printParamHelp($cmdLParamRef);
+
+    printFoot();
+
+    exit if $quitAfterPrint;
+}
+
+
+
+sub printCopyright {
+    print <<"EndOfCopyright";
+This file is part of DanceSteps.
+
+DanceSteps is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+any later version.
+
+DanceSteps is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+EndOfCopyright
+    exit;
+}
+
+
+
+sub getArrayMean {
+    return unless $_[0];
+    my $sum;
+    foreach (@{$_[0]}) {
+        $sum+=$_;
+    }
+    return $sum/scalar(@{$_[0]});
+}

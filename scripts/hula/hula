@@ -1,0 +1,71 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+
+my $inXpmFile   = shift;
+my $outDatFile  = shift;
+
+my %convertKeys = ('~' => 'C',  # Coil
+                   'E' => 'E',  # beta sheet/beta bulge
+                   'B' => 'E',  # beta bridge
+                   'S' => 'C',  # Bend
+                   'T' => 'C',  # Turn
+                   'H' => 'H',  # alpha helix
+                   'G' => 'H',  # 3_{10} helix
+                   'I' => 'H'); # pi helix
+
+my $keyListStr  = join("", keys(%convertKeys));
+
+my @resIdSeq;
+my @resIdDevia;        # Number of deviations from the initial structure per residue.
+my @resIdDeviaPercent; # Number of deviations from the initial structure per residue (percent).
+
+exit unless $inXpmFile;
+
+open(XPMFILE, "<$inXpmFile") || die "ERROR: Cannot open XPM file \"$inXpmFile\": $!\n";
+while(<XPMFILE>) {
+    push(@resIdSeq, $1) if ($_ =~ /^\"([$keyListStr]+)\",?$/);
+}
+close(XPMFILE);
+
+
+print "Found " . @resIdSeq . " residues\n";
+
+my $resId = 0;
+
+for (my $i=(scalar(@resIdSeq)-1); $i>=0; $i--) {
+    $resId++;
+    
+    ### Convert sequence first to a H/E/C only sequence ########################
+    foreach my $tmpKey (keys(%convertKeys)) {
+        $resIdSeq[$i] =~ s/$tmpKey/$convertKeys{$tmpKey}/g;
+    }
+    ############################################################################
+
+    ### Test each sequence element if it deviates from its initial structure ###
+    my @tmpArray = split(//, $resIdSeq[$i]);
+    my $iniStruc = $tmpArray[0];
+    for (my $frameId=1; $frameId<@tmpArray; $frameId++) {
+        $resIdDevia[$resId]++ unless $tmpArray[$frameId] eq $iniStruc;
+    }
+    ############################################################################
+
+    ### Calculate the percentage value of deviations ###########################
+    $resIdDeviaPercent[$resId] = $resIdDevia[$resId]*100/scalar(@tmpArray) if $resIdDevia[$resId];
+    ############################################################################
+}
+
+
+unless ($outDatFile) {
+    $outDatFile = $inXpmFile;
+    $outDatFile =~ s/\.xpm//g;
+    $outDatFile .= '.dat';
+}
+
+open(OUTFILE, ">$outDatFile") || die "ERROR: Cannot open file \"$outDatFile\": $!\n";
+printf OUTFILE ("# ResID   nChanges   Percent\n");
+for (my $resId=0; $resId<@resIdSeq; $resId++) {
+    printf OUTFILE ("  %5d      %5d   %7.3f\n", $resId, $resIdDevia[$resId] ? $resIdDevia[$resId] : 0, $resIdDeviaPercent[$resId] ? $resIdDeviaPercent[$resId] : 0);
+}
+close(OUTFILE);

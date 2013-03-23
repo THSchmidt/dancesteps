@@ -1,0 +1,628 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+our $javaCP  = "/storage/phd/lib/xwalk_v0.4email/bin/"; # The path to the Xwalk tool.
+our $inPath  = "/home/tommy/phd/models/complex/symmons_original/00_source/";
+our $inFile  = "monomer_AcDQ_docked_symmons.pdb";
+our $outPdbPath = "monomer_AcDQ_docked_symmons_solventPathDistances.pdb";
+
+
+my @xlinkedResidues = ({'chainId' => 'D', 'resId' =>  31, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' =>  58, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' =>  65, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' => 167, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' => 177, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' => 196, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' => 226, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' => 296, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' => 321, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' => 327, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' => 338, 'atomName' => 'CB'},
+                       {'chainId' => 'D', 'resId' => 352, 'atomName' => 'CB'},
+                       {'chainId' => 'A', 'resId' =>  25, 'atomName' => 'CB'},
+                       {'chainId' => 'A', 'resId' => 153, 'atomName' => 'CB'},
+                       {'chainId' => 'A', 'resId' => 259, 'atomName' => 'CB'},
+                       {'chainId' => 'A', 'resId' => 267, 'atomName' => 'CB'},
+                       {'chainId' => 'A', 'resId' => 284, 'atomName' => 'CB'},
+                       {'chainId' => 'A', 'resId' => 304, 'atomName' => 'CB'},
+                       {'chainId' => 'C', 'resId' => 226, 'atomName' => 'CB'},
+                       {'chainId' => 'Q', 'resId' => 124, 'atomName' => 'CB'},
+                       {'chainId' => 'Q', 'resId' => 139, 'atomName' => 'CB'},
+                       {'chainId' => 'Q', 'resId' => 142, 'atomName' => 'CB'},
+                       {'chainId' => 'Q', 'resId' => 363, 'atomName' => 'CB'});
+
+#my @possiblePartners = ({'chainId' => 'D', 'resName' => 'LYS', 'atomName' => 'NZ'},
+#                        {'chainId' => 'A', 'resName' => 'LYS', 'atomName' => 'NZ'});
+
+my @possiblePartners = ({'chainId' => 'C', 'resName' => 'LYS', 'atomName' => 'NZ'},
+                        {'chainId' => 'Q', 'resName' => 'LYS', 'atomName' => 'NZ'});
+
+my %xLenRange  = ('start' => 25,
+                  'end'   => 50,
+                  'step'  => 1);
+my %spaceRange = ('start' => 0.5,
+                  'end'   => 3.1,
+                  'step'  => 0.1);
+my %sasds;
+
+my $out100Percent  = 2 * scalar(@xlinkedResidues) * scalar(@possiblePartners) * (($spaceRange{'end'} - $spaceRange{'start'})/$spaceRange{'step'}) * (($xLenRange{'end'} - $xLenRange{'start'} + 1)/$xLenRange{'step'});
+my $countPercent   = 0;
+
+
+mkdir("pdb");
+
+for (my $xLen=$xLenRange{'start'}; $xLen<=$xLenRange{'end'}; $xLen+=$xLenRange{'step'}) {
+    for (my $aId=0; $aId<@xlinkedResidues; $aId++) {
+        for (my $bId=0; $bId<@possiblePartners; $bId++) {
+
+            ### Build the atom selection strings for xwalk #####################
+            my @atomSelStrA2B;
+            my @atomSelStrB2A;
+            if (defined $possiblePartners[$bId]{'resName'}) {
+                my @potentialPartn = getPartnWithinRange($xlinkedResidues[$aId]{'chainId'},
+                                                         $xlinkedResidues[$aId]{'resId'},
+                                                         $xlinkedResidues[$aId]{'atomName'},
+                                                         $possiblePartners[$bId]{'chainId'},
+                                                         $possiblePartners[$bId]{'resName'},
+                                                         $possiblePartners[$bId]{'atomName'},
+                                                         $xLen);
+                foreach (@potentialPartn) {
+                    my $tmpXlinkStr = sprintf("-c1 %s -r1 %d -a1 %s -c2 %s -r2 %s -a2 %s ", $xlinkedResidues[$aId]{'chainId'},
+                                                                                            $xlinkedResidues[$aId]{'resId'},
+                                                                                            $xlinkedResidues[$aId]{'atomName'},
+                                                                                            $$_{'chainId'},
+                                                                                            $$_{'resId'},
+                                                                                            $$_{'atomName'});
+                    push(@atomSelStrA2B, $tmpXlinkStr);
+
+                    $tmpXlinkStr = sprintf("-c2 %s -r2 %d -a2 %s -c1 %s -r1 %s -a1 %s ", $xlinkedResidues[$aId]{'chainId'},
+                                                                                         $xlinkedResidues[$aId]{'resId'},
+                                                                                         $xlinkedResidues[$aId]{'atomName'},
+                                                                                         $$_{'chainId'},
+                                                                                         $$_{'resId'},
+                                                                                         $$_{'atomName'});
+                    push(@atomSelStrB2A, $tmpXlinkStr);
+                }
+            }
+            else {
+                my $tmpXlinkStr = sprintf("-c1 %s -r1 %d -a1 %s -c2 %s -r2 %s -a2 %s ", $xlinkedResidues[$aId]{'chainId'},
+                                                                                        $xlinkedResidues[$aId]{'resId'},
+                                                                                        $xlinkedResidues[$aId]{'atomName'},
+                                                                                        $possiblePartners[$bId]{'chainId'},
+                                                                                        $possiblePartners[$bId]{'resId'},
+                                                                                        $possiblePartners[$bId]{'atomName'});
+                push(@atomSelStrA2B, $tmpXlinkStr);
+
+                $tmpXlinkStr = sprintf("-c2 %s -r2 %d -a2 %s -c1 %s -r1 %s -a1 %s ", $xlinkedResidues[$aId]{'chainId'},
+                                                                                     $xlinkedResidues[$aId]{'resId'},
+                                                                                     $xlinkedResidues[$aId]{'atomName'},
+                                                                                     $possiblePartners[$bId]{'chainId'},
+                                                                                     $possiblePartners[$bId]{'resId'},
+                                                                                     $possiblePartners[$bId]{'atomName'});
+                push(@atomSelStrB2A, $tmpXlinkStr);
+            }
+            ####################################################################
+
+
+            ### Run xwalk using different grid spacings ########################
+            for (my $space=$spaceRange{'start'}; $space<$spaceRange{'end'}; $space+=$spaceRange{'step'}) { # Using "<" instead of "<=" because of floating point errors in summation.
+
+                ### Progress output ############################################
+                printf("Running... (%5.2f%%)\r", $countPercent*100/$out100Percent);
+                $countPercent++;
+                ################################################################
+
+                for (my $i=0; $i<@atomSelStrA2B; $i++) {
+                    if (runXwalk($xLen, $space, $atomSelStrA2B[$i])) { # Execute xwalk.
+                        my @tmpSasds = readXwalkOut("tmp.dat");
+                        $atomSelStrA2B[$i] =~ /-c2\s+([A-Z])\s+-r2\s+(\d+)\s+-a2\s+([A-Z].)/;
+                        my %tmpHash = ('chainIdA'  => $xlinkedResidues[$aId]{'chainId'},
+                                       'resIdA'    => $xlinkedResidues[$aId]{'resId'},
+                                       'atomNameA' => $xlinkedResidues[$aId]{'atomName'},
+                                       'chainIdB'  => $1,
+                                       'resIdB'    => $2,
+                                       'atomNameB' => $3,
+                                       'direction' => 'a2b',
+                                       'space'     => $space,
+                                       'xLen'      => $xLen,
+                                       'eucDist'   => $tmpSasds[0]{'eucDist'},
+                                       'sasDist'   => $tmpSasds[0]{'sasDist'});
+
+                        my $key = 'chain' . $tmpHash{'chainIdA'} . '_resi' . $tmpHash{'resIdA'} . '_atom' . $tmpHash{'atomNameA'} . '-';
+                        $key   .= 'chain' . $tmpHash{'chainIdB'} . '_resi' . $tmpHash{'resIdB'} . '_atom' . $tmpHash{'atomNameB'};
+                        push(@{$sasds{$key}}, \%tmpHash);
+                    }
+                }
+
+
+                for (my $i=0; $i<@atomSelStrB2A; $i++) {
+                    if (runXwalk($xLen, $space, $atomSelStrB2A[$i])) { # Execute xwalk.
+                        my @tmpSasds = readXwalkOut("tmp.dat");
+                        $atomSelStrB2A[$i] =~ /-c1\s+([A-Z])\s+-r1\s+(\d+)\s+-a1\s+([A-Z].)/;
+                        my %tmpHash = ('chainIdA'  => $xlinkedResidues[$aId]{'chainId'},
+                                       'resIdA'    => $xlinkedResidues[$aId]{'resId'},
+                                       'atomNameA' => $xlinkedResidues[$aId]{'atomName'},
+                                       'chainIdB'  => $1,
+                                       'resIdB'    => $2,
+                                       'atomNameB' => $3,
+                                       'direction' => 'b2a',
+                                       'space'     => $space,
+                                       'xLen'      => $xLen,
+                                       'eucDist'   => $tmpSasds[0]{'eucDist'},
+                                       'sasDist'   => $tmpSasds[0]{'sasDist'});
+
+                        my $key = 'chain' . $tmpHash{'chainIdA'} . '_resi' . $tmpHash{'resIdA'} . '_atom' . $tmpHash{'atomNameA'} . '-';
+                        $key   .= 'chain' . $tmpHash{'chainIdB'} . '_resi' . $tmpHash{'resIdB'} . '_atom' . $tmpHash{'atomNameB'};
+                        push(@{$sasds{$key}}, \%tmpHash);
+                    }
+                }
+            }
+            ####################################################################
+        }
+    }
+}
+
+
+
+## Save all calculated SASDs ###################################################
+foreach my $key (keys %sasds) {
+    my @sortedBySasds = sort { $a->{'sasDist'} <=> $b->{'sasDist'} } @{$sasds{$key}};
+    open(OUTFILE, ">sasd." . $key . ".dat") || die "ERROR: Cannot open file \"sasd." . $key . ".dat\": $!\n";
+    print OUTFILE ("# sasDist   eucDist   space   xlength   direction\n");
+    for (my $i=0; $i<@sortedBySasds; $i++) {
+        printf OUTFILE ("    %5.2f     %5.2f   %5.2f     %5.2f   %9s\n", $sortedBySasds[$i]{'sasDist'}, $sortedBySasds[$i]{'eucDist'}, $sortedBySasds[$i]{'space'}, $sortedBySasds[$i]{'xLen'}, $sortedBySasds[$i]{'direction'});
+    }
+    close(OUTFILE);
+}
+################################################################################
+
+
+
+sub runXwalk {
+    my $xLen     = shift;
+    my $space    = shift;
+    my $xlinkStr = shift;
+
+    my $pdbOut = "pdb/" . $xlinkStr;
+    $pdbOut =~ s/-c[12] /chain/g;
+    $pdbOut =~ s/ -r[12] /_resi/g;
+    $pdbOut =~ s/ -a[12] /_atom/g;
+    $pdbOut =~ s/ /-/;
+    chop($pdbOut);
+    $pdbOut .= sprintf(".space%03.1f_xlen%02d.pdb", $space,  $xLen);
+
+
+    ### Execute xwalk ##########################################################
+#    print "java -Xmx8192m -cp $javaCP Xwalk -infile " . $inPath . $inFile . " -pymol -out tmp.pml " . $xlinkStr . " -space " . $space . " -max " . $xLen . " >tmp.dat 2>/dev/null\n";
+    system("java -Xmx8192m -cp $javaCP Xwalk -infile " . $inPath . $inFile . " -pymol -out tmp.pml " . $xlinkStr . " -space " . $space . " -max " . $xLen . " >tmp.dat 2>/dev/null");
+    ############################################################################
+
+
+    ### Clean up ###############################################################
+    if (-s "tmp.dat") {
+        system("mv $outPdbPath " . $pdbOut);
+        system("rm tmp.pml");
+        return 1;
+    }
+    system("rm $outPdbPath tmp.pml tmp.dat");
+    return 0;
+    ############################################################################
+}
+
+
+
+sub readXwalkOut {
+    my $xwalkOutfile = shift;
+
+    my @sasds;
+
+    open(TXTFILE, "<" . $xwalkOutfile) || die "ERROR: Cannot open TXT file \"" . $xwalkOutfile . "\": $!\n";
+    while (<TXTFILE>) {
+        #1       monomer_AcDQ_docked.pdb LYS-778-A-NZ    LYS-58-D-CB     300     10.9    20.0    -       -       -
+        if ($_ =~ /^\d+\s+.+?\.pdb\s+[A-Z]{3}-(\d+)-([A-Z])-([A-Z].)\s+[A-Z]{3}-(\d+)-([A-Z])-([A-Z].)\s+\d+\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)/) {
+            my %tmpHash = ('chainIdA'  => $2,
+                           'resIdA'    => $1,
+                           'atomNameA' => $3,
+                           'chainIdB'  => $5,
+                           'resIdB'    => $4,
+                           'atomNameB' => $6,
+                           'eucDist'   => $7,
+                           'sasDist'   => $9);
+            push(@sasds, \%tmpHash);
+        }
+    }
+    close(TXTFILE);
+
+    system("rm " . $xwalkOutfile);
+    return @sasds;
+}
+
+# Declare the sasd hash
+# mkdir("pdb")
+# Run through all xlengths
+#   Run through all xlinkedResidues "A"
+#     Run through all @possiblePartners "B"
+#       Declare the array of atom selection strings
+#       If the current possible partner "B" is defined by resname:
+#         execute xwalk first using the -euc option for determining the potentially reachable residues of the group defined by resname within the range xlength
+#         get all residues within the xlength distance of group "B"
+#         run through all possible interactions
+#           create the atom selection strings for executing xwalk for this interaction (both a2b & b2a)
+#       else:
+#         create the atom selection strings for executing xwalk for this interaction (both a2b & b2a)
+#
+#       Run through all spacings
+#         Run through all atom selection strings
+#           execute xwalk with the current atom selection string, spacing and xlength >tmp.dat
+#           if xwalk found an sasd (if the tmp.dat is not empty)
+#             read tmp.dat and
+#               create a temporary hash with all values chainId(A&B), resId(A&B), atomName(A&B), direction (a2b || b2a), spacing, xlength, euclidean distance, and sasd
+#               push the temporary hash reference to the sasd hash at position "chain<chainIdA>_resi<resIdA>_atom<atomNameA>-chain<chainIdB>_resi<resIdB>_atom<atomNameB>"
+#             move the PDB file to "pdb/chain<chainIdA>_resi<resIdA>_atom<atomNameA>-chain<chainIdB>_resi<resIdB>_atom<atomNameB>.space<spacing>_xlength<length>.<a2b||b2a>.pdb"
+#             delete the dat file
+
+# Run through all sasd hash entries
+#   sort the current array by its sasd key
+#   print out the sorted list of sasds
+
+
+#my @sasdFiles;
+#my $validation     = 0; # Write out matrix files for making 3D maps with Gnuplot (spacing vs. xlength).
+
+#my $out100Percent  = 2 * scalar(@xlinkedResidues) * scalar(@possiblePartners) * (($spaceScanEnd - $spaceScanStart)/$spaceScanStep) * (($xLenScanEnd - $xLenScanStart + 1)/$xLenScanStep);
+#my $countPercent   = 0;
+
+#my %alreadyDone;
+
+
+#for (my $xlId=0; $xlId<@xlinkedResidues; $xlId++) {
+#    for (my $partnId=0; $partnId<@possiblePartners; $partnId++) {
+#
+#        ### Generate the crosslinking partner strings ##########################
+#        my $tmpDirStrA = "chain" . $xlinkedResidues[$xlId]{'chainId'};
+#        my $tmpDirStrB = "-chain" . $possiblePartners[$partnId]{'chainId'};
+#
+#        my $xlinkStr = sprintf("-c1 %s -a1 %s -c2 %s -a2 %s ", $xlinkedResidues[$xlId]{'chainId'}, $xlinkedResidues[$xlId]{'atomName'}, $possiblePartners[$partnId]{'chainId'}, $possiblePartners[$partnId]{'atomName'});
+#        if (defined $xlinkedResidues[$xlId]{'resName'}) {
+#            $xlinkStr   .= sprintf("-aa1 %s ", $xlinkedResidues[$xlId]{'resName'});
+#            $tmpDirStrA .= "_resn" . $xlinkedResidues[$xlId]{'resName'};
+#        }
+#        elsif (defined $xlinkedResidues[$xlId]{'resId'}) {
+#            $xlinkStr   .= sprintf("-r1 %d ", $xlinkedResidues[$xlId]{'resId'});
+#            $tmpDirStrA .= "_resi" . $xlinkedResidues[$xlId]{'resId'};
+#        }
+#        else {
+#            $xlinkStr   .= sprintf("-aa1 %s ", 'LYS');
+#            $tmpDirStrA .= "_resnLYS";
+#        }
+#
+#        if (defined $possiblePartners[$partnId]{'resName'}) {
+#            $xlinkStr   .= sprintf("-aa2 %s ", $possiblePartners[$partnId]{'resName'});
+#            $tmpDirStrB .= "_resn" . $possiblePartners[$partnId]{'resName'};
+#        }
+#        elsif (defined $possiblePartners[$partnId]{'resId'}) {
+#            $xlinkStr   .= sprintf("-r2 %d ", $possiblePartners[$partnId]{'resId'});
+#            $tmpDirStrB .= "_resi" . $possiblePartners[$partnId]{'resId'};
+#        }
+#        else {
+#            $xlinkStr   .= sprintf("-aa2 %s ", 'LYS');
+#            $tmpDirStrB .= "_resnLYS";
+#        }
+#        ########################################################################
+#
+#
+#        ### Create the work directory ##########################################
+#        mkdir($tmpDirStrA . $tmpDirStrB);
+#        chdir($tmpDirStrA . $tmpDirStrB); # Go for work...
+#        ########################################################################
+#
+#
+#        ### Analysis with different grid spacings and crosslinker lengths ######
+#        for (my $spacing=$spaceScanStart; $spacing<$spaceScanEnd; $spacing+=$spaceScanStep) { # Using "<" instead of "<=" because of floating point errors in summation.
+#            for (my $xLength=$xLenScanStart; $xLength<=$xLenScanEnd; $xLength+=$xLenScanStep) {
+#
+#                ### Progress output ####################################################
+#                printf("Running... (%5.2f%%)\r", $countPercent*100/$out100Percent);
+#                $countPercent++;
+#                ########################################################################
+#
+#                my $outPref = "space" . sprintf("%0.1f", $spacing) . "_max" . sprintf("%2d", $xLength) . ".a2b";
+#                if (runXwalk($xlinkStr, $spacing, $xLength, $outPref)) {
+#                    my %tmpHash = ('dir'        => $tmpDirStrA . $tmpDirStrB,
+#                                   'outTxtFile' => $outPref . ".txt",
+#                                   'direction'  => 'a2b',
+#                                   'spacing'    => $spacing,
+#                                   'xlength'    => $xLength,
+#                                   'chainIdA'   => $xlinkedResidues[$xlId]{'chainId'},
+#                                   'resIdA'     => $xlinkedResidues[$xlId]{'resId'},
+#                                   'atomNameA'  => $xlinkedResidues[$xlId]{'atomName'},
+#                                   'chainIdB'   => $possiblePartners[$partnId]{'chainId'},
+#                                   'atomNameB'  => $possiblePartners[$partnId]{'atomName'});
+#                    push(@sasdFiles,  \%tmpHash);
+#                }
+#            }
+#        }
+#        ########################################################################
+#
+#
+#        ### Reverse search #####################################################
+#        if (defined $xlinkedResidues[$xlId]{'resId'} && defined $possiblePartners[$partnId]{'resName'}) {
+#            ### Progress output ################################################
+#            printf("Running... (%5.2f%%)\r", $countPercent*100/$out100Percent);
+#            $countPercent++;
+#            ####################################################################
+#
+#            ### Get potential crosslinking partners of residue ID i with resname x #
+#            # This step is necessary to decrease the number of residues defined by residue name.
+#            # Otherwise xwalk needs too long to measuring the SASDs starting at each residue with residue name x.
+#            my @possiblePartners4ReverseRun = possXlinkPartners($xlinkStr, $xLenScanEnd, $xlinkedResidues[$xlId]{'chainId'}, $xlinkedResidues[$xlId]{'resId'}, $xlinkedResidues[$xlId]{'atomName'});
+#            ####################################################################
+#
+#            for (my $partnId4ReverseRun=0; $partnId4ReverseRun<@possiblePartners4ReverseRun; $partnId4ReverseRun++) {
+#                ### Generate the crosslinking partner strings (reverse) ########
+#                $xlinkStr = sprintf("-c2 %s -a2 %s -c1 %s -a1 %s ", $xlinkedResidues[$xlId]{'chainId'}, $xlinkedResidues[$xlId]{'atomName'}, $possiblePartners4ReverseRun[$partnId4ReverseRun]{'chainId'}, $possiblePartners4ReverseRun[$partnId4ReverseRun]{'atomName'});
+#                if (defined $xlinkedResidues[$xlId]{'resName'}) {
+#                    $xlinkStr   .= sprintf("-aa2 %s ", $xlinkedResidues[$xlId]{'resName'});
+#                }
+#                elsif (defined $xlinkedResidues[$xlId]{'resId'}) {
+#                    $xlinkStr   .= sprintf("-r2 %d ", $xlinkedResidues[$xlId]{'resId'});
+#                }
+#                else {
+#                    $xlinkStr   .= sprintf("-aa2 %s ", 'LYS');
+#                }
+#
+#                if (defined $possiblePartners4ReverseRun[$partnId4ReverseRun]{'resName'}) {
+#                    $xlinkStr   .= sprintf("-aa1 %s ", $possiblePartners4ReverseRun[$partnId4ReverseRun]{'resName'});
+#                }
+#                elsif (defined $possiblePartners4ReverseRun[$partnId4ReverseRun]{'resId'}) {
+#                    $xlinkStr   .= sprintf("-r1 %d ", $possiblePartners4ReverseRun[$partnId4ReverseRun]{'resId'});
+#                }
+#                else {
+#                    $xlinkStr   .= sprintf("-aa1 %s ", 'LYS');
+#                }
+#                ################################################################
+#
+#
+#                ### Analysis with different grid spacings and crosslinker lengths ##
+#                next if $alreadyDone{$xlinkStr};
+#                $alreadyDone{$xlinkStr} = 1; # Do the analysis between the same atoms only once.
+#
+#                for (my $spacing=$spaceScanStart; $spacing<$spaceScanEnd; $spacing+=$spaceScanStep) { # Using "<" instead of "<=" because of floating point errors in summation.
+#                    for (my $xLength=$xLenScanStart; $xLength<=$xLenScanEnd; $xLength+=$xLenScanStep) {
+#
+#                        my $outPref = "space" . sprintf("%0.1f", $spacing) . "_max" . sprintf("%2d", $xLength) . ".b2a";
+#                        if (runXwalk($xlinkStr, $spacing, $xLength, $outPref)) {
+#                            my %tmpHash = ('dir'        => $tmpDirStrA . $tmpDirStrB,
+#                                           'outTxtFile' => $outPref . ".txt",
+#                                           'direction'  => 'b2a',
+#                                           'spacing'    => $spacing,
+#                                           'xlength'    => $xLength,
+#                                           'chainIdA'   => $xlinkedResidues[$xlId]{'chainId'},
+#                                           'resIdA'     => $xlinkedResidues[$xlId]{'resId'},
+#                                           'atomNameA'  => $xlinkedResidues[$xlId]{'atomName'},
+#                                           'chainIdB'   => $possiblePartners4ReverseRun[$partnId4ReverseRun]{'chainId'},
+#                                           'resIdB'     => $possiblePartners4ReverseRun[$partnId4ReverseRun]{'resId'},
+#                                           'atomNameB'  => $possiblePartners4ReverseRun[$partnId4ReverseRun]{'atomName'});
+#                            push(@sasdFiles,  \%tmpHash);
+#                        }
+#                    }
+#                }
+#                ################################################################
+#            }
+#        }
+#        else {
+#            print "\nHier darf nicht\n";
+#            ### Generate the crosslinking partner strings (reverse) ############
+#            $xlinkStr = sprintf("-c2 %s -a2 %s -c1 %s -a1 %s ", $xlinkedResidues[$xlId]{'chainId'}, $xlinkedResidues[$xlId]{'atomName'}, $possiblePartners[$partnId]{'chainId'}, $possiblePartners[$partnId]{'atomName'});
+#            if (defined $xlinkedResidues[$xlId]{'resName'}) {
+#                $xlinkStr   .= sprintf("-aa2 %s ", $xlinkedResidues[$xlId]{'resName'});
+#            }
+#            elsif (defined $xlinkedResidues[$xlId]{'resId'}) {
+#                $xlinkStr   .= sprintf("-r2 %d ", $xlinkedResidues[$xlId]{'resId'});
+#            }
+#            else {
+#                $xlinkStr   .= sprintf("-aa2 %s ", 'LYS');
+#            }
+#
+#            if (defined $possiblePartners[$partnId]{'resName'}) {
+#                $xlinkStr   .= sprintf("-aa1 %s ", $possiblePartners[$partnId]{'resName'});
+#            }
+#            elsif (defined $possiblePartners[$partnId]{'resId'}) {
+#                $xlinkStr   .= sprintf("-r1 %d ", $possiblePartners[$partnId]{'resId'});
+#            }
+#            else {
+#                $xlinkStr   .= sprintf("-aa1 %s ", 'LYS');
+#            }
+#            ####################################################################
+#
+#
+#            ### Analysis with different grid spacings and crosslinker lengths ##
+#            for (my $spacing=$spaceScanStart; $spacing<$spaceScanEnd; $spacing+=$spaceScanStep) { # Using "<" instead of "<=" because of floating point errors in summation.
+#                for (my $xLength=$xLenScanStart; $xLength<=$xLenScanEnd; $xLength+=$xLenScanStep) {
+#
+#                    ### Progress output ########################################
+#                    printf("Running... (%5.2f%%)\r", $countPercent*100/$out100Percent);
+#                    $countPercent++;
+#                    ############################################################
+#
+#                    my $outPref = "space" . sprintf("%0.1f", $spacing) . "_max" . sprintf("%2d", $xLength) . ".b2a";
+#                    if (runXwalk($xlinkStr, $spacing, $xLength, $outPref)) {
+#                        my %tmpHash = ('dir'        => $tmpDirStrA . $tmpDirStrB,
+#                                       'outTxtFile' => $outPref . ".txt",
+#                                       'direction'  => 'b2a',
+#                                       'spacing'    => $spacing,
+#                                       'xlength'    => $xLength);
+#                        push(@sasdFiles,  \%tmpHash);
+#                    }
+#                }
+#            }
+#            ####################################################################
+#        }
+
+#        chdir(".."); # Go home...
+#        rmdir($tmpDirStrA . $tmpDirStrB); # Delete recent work directory if no data were generated.
+#    }
+#}
+
+
+
+### Parse all SASD files and combine distances of the same atom pairs ##########
+#foreach (@sasdFiles) {
+#    readOutTxt(\%sasds, $_);
+#}
+################################################################################
+
+
+### Save all calculated SASDs (sorted) #########################################
+#foreach my $hashId (keys %sasds) {
+#    my @sortedSasds = sort { $a->{'sasDist'} <=> $b->{'sasDist'} } @{$sasds{$hashId}};
+#
+#    open(OUTFILELEAST, ">sasds." . $hashId . ".dat") || die "ERROR: Cannot write into file \"sasds." . $hashId . ".dat\": $!\n";
+#    print OUTFILELEAST ("# sasDist   eucDist   space   xlength   direction   dir\n");
+#    foreach (@sortedSasds) {
+#        printf OUTFILELEAST ("    %5.2f     %5.2f   %5.2f     %5.2f   %9s   %s\n", $$_{'sasDist'}, $$_{'eucDist'}, $$_{'spacing'}, $$_{'xlength'}, $$_{'direction'}, $$_{'dir'});
+#    }
+#    close(OUTFILELEAST);
+#
+#    ### For validation and 3D map plotting #####################################
+#    if ($validation) {
+#        open(VALIDOUTA2B, ">valid." . $hashId . ".a2b.dat") || die "ERROR: Cannot write into file \"valid." . $hashId . ".a2bdat\": $!\n";
+#        open(VALIDOUTB2A, ">valid." . $hashId . ".b2a.dat") || die "ERROR: Cannot write into file \"valid." . $hashId . ".b2adat\": $!\n";
+#        print VALIDOUTA2B ("# space   xlength   sasDist\n");
+#        print VALIDOUTB2A ("# space   xlength   sasDist\n");
+#        my $zRangeSetA2B = 0;
+#        my $zRangeSetB2A = 0;
+#        foreach (@sortedSasds) {
+#            if ($$_{'direction'} eq 'a2b') {
+#                unless ($zRangeSetA2B) {
+#                    printf VALIDOUTA2B ("  %5.2f     %5.2f     -1.00\n", $$_{'spacing'}, $$_{'xlength'});
+#                    printf VALIDOUTA2B ("  %5.2f     %5.2f     50.00\n", $$_{'spacing'}, $$_{'xlength'});
+#                    $zRangeSetA2B = 1;
+#                }
+#                printf VALIDOUTA2B ("  %5.2f     %5.2f     %5.2f\n", $$_{'spacing'}, $$_{'xlength'}, $$_{'sasDist'});
+#            }
+#            elsif ($$_{'direction'} eq 'b2a') {
+#                unless ($zRangeSetB2A) {
+#                    printf VALIDOUTB2A ("  %5.2f     %5.2f     -1.00\n", $$_{'spacing'}, $$_{'xlength'});
+#                    printf VALIDOUTB2A ("  %5.2f     %5.2f     50.00\n", $$_{'spacing'}, $$_{'xlength'});
+#                    $zRangeSetB2A = 1;
+#                }
+#                printf VALIDOUTB2A ("  %5.2f     %5.2f     %5.2f\n", $$_{'spacing'}, $$_{'xlength'}, $$_{'sasDist'}) if $$_{'direction'} eq 'b2a';
+#            }
+#        }
+#        close(VALIDOUTA2B);
+#        close(VALIDOUTB2A);
+#    }
+#    ############################################################################
+#}
+################################################################################
+
+
+
+
+sub getPartnWithinRange {
+    my $chainIdA   = shift;
+    my $resIdA     = shift;
+    my $atomNameA  = shift;
+    my $chainIdB   = shift;
+    my $resNameB   = shift;
+    my $atomNameB  = shift;
+    my $xLen       = shift;
+
+    my @possiblePartners;
+
+    my $xlinkStr = sprintf("-c1 %s -r1 %d -a1 %s -c2 %s -aa2 %s -a2 %s ", $chainIdA, $resIdA, $atomNameA, $chainIdB, $resNameB, $atomNameB);
+
+    system("java -Xmx8192m -cp $javaCP Xwalk -infile " . $inPath . $inFile . " " . $xlinkStr . " -max " . $xLen . " -euc >eucdist.dat 2>/dev/null");
+
+    open(TXTFILE, "<eucdist.dat") || die "ERROR: Cannot open TXT file \"eucdist.dat\": $!\n";
+    while (<TXTFILE>) {
+        if ($_ =~ /^\d+\s+.+?\.pdb\s+[A-Z]{3}-(\d+)-([A-Z])-([A-Z].)\s+[A-Z]{3}-(\d+)-([A-Z])-([A-Z].)\s+\d+\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)/) {
+            my %tmpHash = ('resId'    => $1,
+                           'chainId'  => $2,
+                           'atomName' => $3);
+            if ($resIdA eq $1 && $chainIdA eq $2 && $atomNameA eq $3) {
+                %tmpHash = ('resId'    => $4,
+                            'chainId'  => $5,
+                            'atomName' => $6);
+            }
+            push(@possiblePartners, \%tmpHash);
+        }
+    }
+    close(TXTFILE);
+    system("rm eucdist.dat");
+
+    return @possiblePartners;
+}
+
+
+
+#sub runXwalk {
+#    my $xlinkStr = shift;
+#    my $spacing  = shift;
+#    my $xLength  = shift;
+#    my $outPref  = shift;
+#
+##    print "java -Xmx8192m -cp $javaCP Xwalk -infile " . $inPath . $inFile . " -pymol -out tmp.pml " . $xlinkStr . " -space " . $spacing . " -max " . $xLength . " >>" . $outPref . ".txt 2>/dev/null\n";
+#    system("java -Xmx8192m -cp $javaCP Xwalk -infile " . $inPath . $inFile . " -pymol -out tmp.pml " . $xlinkStr . " -space " . $spacing . " -max " . $xLength . " >>" . $outPref . ".txt 2>/dev/null");
+#    if (-s $outPref . ".txt") {
+#        system("mv tmp.pml $outPref.pml");
+#        system("mv $outPdbPath $outPref.pdb");
+#        return 1;
+#    }
+#    else {
+#        system("rm tmp.pml $outPdbPath " . $outPref . ".txt");
+#        return 0;
+#    }
+#}
+
+
+
+#sub readOutTxt {
+#    my $sasdsRef      = shift;
+#    my $sasdFilesRef  = shift;
+#
+#    open(TXTFILE, "<" . $$sasdFilesRef{'dir'} . "/" . $$sasdFilesRef{'outTxtFile'}) || die "ERROR: Cannot open TXT file \"" . $$sasdFilesRef{'dir'} . "/" . $$sasdFilesRef{'outTxtFile'} . "\": $!\n";
+#    
+#    while (<TXTFILE>) {
+#        #1       monomer_AcDQ_docked.pdb LYS-778-A-NZ    LYS-58-D-CB     300     10.9    20.0    -       -       -
+#        if ($_ =~ /^\d+\s+.+?\.pdb\s+[A-Z]{3}-(\d+)-([A-Z])-([A-Z].)\s+[A-Z]{3}-(\d+)-([A-Z])-([A-Z].)\s+\d+\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)/) {
+#            if (!defined $$sasdFilesRef{'resIdB'}) {
+#                my $hashId = sprintf("chain%s_resi%d_atom%s-chain%s_resi%d_atom%s", $5, $4, $6, $2, $1, $3);
+#                unless ($$sasdsRef{$hashId}) {
+#                    $hashId = sprintf("chain%s_resi%d_atom%s-chain%s_resi%d_atom%s", $2, $1, $3, $5, $4, $6);
+#                }
+#
+#                my %tmpHash = ('spacing'   => $$sasdFilesRef{'spacing'},
+#                               'xlength'   => $$sasdFilesRef{'xlength'},
+#                               'direction' => $$sasdFilesRef{'direction'},
+#                               'dir'       => $$sasdFilesRef{'dir'},
+#                               'eucDist'   => $7,
+#                               'sasDist'   => $9);
+#
+#                push(@{$$sasdsRef{$hashId}}, \%tmpHash);
+#            }
+#            elsif (($$sasdFilesRef{'chainIdA'} eq $2 && $$sasdFilesRef{'resIdA'} eq $1 && $$sasdFilesRef{'atomNameA'} eq $3 && 
+#                 $$sasdFilesRef{'chainIdB'} eq $5 && $$sasdFilesRef{'resIdB'} eq $4 && $$sasdFilesRef{'atomNameB'} eq $6) || 
+#                ($$sasdFilesRef{'chainIdA'} eq $5 && $$sasdFilesRef{'resIdA'} eq $4 && $$sasdFilesRef{'atomNameA'} eq $6 && 
+#                 $$sasdFilesRef{'chainIdB'} eq $2 && $$sasdFilesRef{'resIdB'} eq $1 && $$sasdFilesRef{'atomNameB'} eq $3)) {
+#
+#                my $hashId = sprintf("chain%s_resi%d_atom%s-chain%s_resi%d_atom%s", $5, $4, $6, $2, $1, $3);
+#                unless ($$sasdsRef{$hashId}) {
+#                    $hashId = sprintf("chain%s_resi%d_atom%s-chain%s_resi%d_atom%s", $2, $1, $3, $5, $4, $6);
+#                }
+#
+#                my %tmpHash = ('spacing'   => $$sasdFilesRef{'spacing'},
+#                               'xlength'   => $$sasdFilesRef{'xlength'},
+#                               'direction' => $$sasdFilesRef{'direction'},
+#                               'dir'       => $$sasdFilesRef{'dir'},
+#                               'eucDist'   => $7,
+#                               'sasDist'   => $9);
+#
+#                push(@{$$sasdsRef{$hashId}}, \%tmpHash);
+#            }
+#        }
+#    }
+#    close(TXTFILE);
+#}

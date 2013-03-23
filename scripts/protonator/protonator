@@ -1,0 +1,623 @@
+#!/usr/bin/perl -w
+
+
+### Load Packages ##############################################################
+use strict;
+use IO::Handle;
+use FindBin qw($Bin); # Absolute path to THIS script.
+use Fcntl;
+autoflush STDOUT 1; # For direct output.
+################################################################################
+
+
+
+### Default Parameters #########################################################
+our $verbose      = 0;                  # Be loud and noisy (and global); default: silent.
+
+my $groInFile     = '';                 # Input gro file.
+my $pdbInFile     = '';                 # Input pdb file.
+my $groOutFile    = 'protonated.gro';   # Output gro file.
+my $aaListFile    = 'proto_aas.list';   # Input amino acid list file.
+################################################################################
+
+
+
+### Internal parameters ########################################################
+our @pdb2gmxAaOrder = ('LYS', 'ARG', 'GLN', 'ASP', 'GLU');
+
+my %coordData;                          # Filled by "GROFiles::readGro(...)" or "PDBFiles::readPdb(...)".
+my @aaListData;                         # Filled by "AaListFiles::readAaList(...)".
+my %resNameIds;                         # A list of all residue IDs per residue name.
+
+my $coordInFile;
+my $answerFile      = "proto.answers";   # Output file; contains the answers for pdb2gmx.
+################################################################################
+
+
+
+### Commandline-Parameters #####################################################
+my %cmdLParam = ('igro'       => \$groInFile,
+                 'ipdb'       => \$pdbInFile,
+                 'ogro'       => \$groOutFile,
+                 'idat'       => \$aaListFile,
+                 'v=f'        => \$verbose,
+                 'NOPARAM'    => \&printHelp,
+                 'UNKNOWN'    => \&printHelp,
+                 'help=f'     => \&printHelp,
+                 '?=f'        => \&printHelp,
+                 'h=f'        => \&printHelp);
+cmdlineParser(\%cmdLParam);
+################################################################################
+
+
+
+### Read the coordinates file ##################################################
+if ($groInFile) {
+    %coordData = GROFiles::readGro($groInFile); # Read input GRO file.
+    $coordInFile = $groInFile;
+}
+elsif ($pdbInFile) {
+    %coordData = PDBFiles::readPdb($pdbInFile); # Read input PDB file.
+    $coordInFile = $pdbInFile;
+}
+else {
+    printHelp();
+}
+################################################################################
+
+
+
+### Read the amino acid list file ##############################################
+@aaListData = Protonator::readAaList($aaListFile); # Read amino acid list file.
+################################################################################
+
+
+
+### Make a list of all residues and their location in the protein ##############
+my @tmpIds;
+foreach (@{$coordData{'atoms'}}) {
+    if ($$_{'resName'} && $$_{'resName'} =~ /([A-Za-z]{3})/ && !$tmpIds[$$_{'resId'}]) {
+        my %tmpHash;
+        $tmpHash{'chainId'} = $$_{'chainId'} if $$_{'chainId'};
+        $tmpHash{'resId'}   = $$_{'resId'};
+        $tmpHash{'resName'} = $$_{'resName'};
+        push(@{$resNameIds{$1}}, \%tmpHash);
+        $tmpIds[$$_{'resId'}] = 1;
+    }
+}
+
+foreach my $resName (sort keys (%resNameIds)) { # Print out the list of residue names.
+    printf ("    %-3s (n=%d)\n", $resName, scalar(@{$resNameIds{$resName}})) if $verbose;
+}
+################################################################################
+
+
+
+### Define protonation states and write out pdb2gmx-answer file ################
+if ($groInFile) {
+    my $pStatesRef = Protonator::getProtoStateGro(\%resNameIds, \@aaListData);
+    Protonator::writeAnswFileGro($answerFile, $pStatesRef);
+}
+elsif ($pdbInFile) {
+    my ($pStatesRef, $chainIdOrderRef) = Protonator::getProtoStatePdb(\%resNameIds, \@aaListData); 
+    Protonator::writeAnswFilePdb($answerFile, $pStatesRef, $chainIdOrderRef);
+}
+################################################################################
+
+
+
+### Execute pdb2gmx ############################################################
+my $execStr = sprintf("pdb2gmx -f %s -o %s -lys -arg -gln -asp -glu -ignh <%s", $coordInFile , $groOutFile, $answerFile);
+print $execStr . "\n";
+system($execStr);
+################################################################################
+
+exit;
+
+
+
+################################################################################
+### Subroutines ################################################################
+################################################################################
+sub printHelp {
+    print "
+################################################################################
+                                   PROTONATOR
+                                  (A Salvation)
+                                 Version: P1000
+                     Written by Thomas H. Schmidt, (c) 2010
+
+                         http://www.csb.bit.uni-bonn.de
+################################################################################
+
+PROTONATOR is a tool to apply the protonation/deprotonation function of the
+GroMACS tool 'pdb2gmx' on a given protein structure file in a comfortable way.
+
+For this PROTONATOR reads in a protein coordinates file (GRO format) and a list
+of amino acids that should be protonated or deprotonated in a data file.
+An example for an amino acid list file is:
+
+# Chain Resname Resid Protonated=p;Deprotonated=d
+A Asp 406 d
+A Asp 407 p
+A Lys 939 p
+A Arg 970 d
+B Asp 1438 d
+B Asp 1439 d
+B Lys 1971 p
+B Arg 2002 p
+C Asp 2482 p
+C Asp 2483 p
+C Lys 3015 d
+C Arg 3046 p
+
+
+USAGE: protonator --ipdb INPUTPDBFILE --idat AMINOACIDLISTFILE
+  --ipdb             Input PDB file.
+  --igro             Input GRO file.
+  --ogro             Output GRO file (default: \"$groOutFile\").
+  --idat             Input amino acid list file (default: \"$aaListFile\").
+  -v                 Be loud and noisy and communicative and meaningful and profound. Seriously!
+  -h, -? or --help   Put out this help.\n\n";
+    exit;
+}
+
+
+
+sub cmdlineParser {
+    my $paramsRef = shift;
+
+    my %knownParam;
+    my @unknownParam;
+
+    for (my $argID=0; $argID<@ARGV; $argID++) {
+        my $cmdlineName = $ARGV[$argID];
+        $knownParam{$ARGV[$argID]} = 0;
+
+        foreach my $paramKey (keys %{$paramsRef}) {
+            my $paramName = $paramKey;
+            my $paramType = 0;
+            my $paramIni  = "--";
+            my $isArray   = 0;
+
+            if ($paramKey =~ /^(.+?)=([\@f])$/) {
+                $paramName = $1;
+                $paramType = $2;
+            }
+
+            $paramIni = "-" if (length($paramName) == 1);
+
+            if ($paramType eq "@") {
+                $isArray = 1;
+            }
+            elsif ($paramType eq "f") {
+                if ($cmdlineName eq $paramIni.$paramName) {
+                    if (ref(${$paramsRef}{$paramKey}) eq "SCALAR") {
+                        ${${$paramsRef}{$paramKey}} = 1;
+                        $knownParam{$cmdlineName} = 1;
+                    }
+                    elsif (ref(${$paramsRef}{$paramKey}) eq "CODE") {
+                        &{${$paramsRef}{$paramKey}}();
+                        $knownParam{$cmdlineName} = 1;
+                    }
+                }
+                next;
+            }
+
+            if ($cmdlineName eq $paramIni.$paramName && not $isArray) {
+                $argID++;
+                next if($ARGV[$argID] =~ /^-/);
+
+                ${${$paramsRef}{$paramKey}} = $ARGV[$argID];
+                $knownParam{$cmdlineName} = 1;
+            }
+            elsif ($ARGV[$argID] eq $paramIni.$paramName && $isArray) {
+                $knownParam{$cmdlineName} = 1;
+                $argID++;
+
+                my @tmpArray;
+                while ($argID <= $#ARGV && not $ARGV[$argID] =~ /^--/ && not $ARGV[$argID] =~ /^-.$/) {
+                    push (@tmpArray, $ARGV[$argID]);
+                    $argID++;
+                }
+                @{${$paramsRef}{$paramKey}} = @tmpArray;
+                $argID--;
+            }
+        }
+
+        if (defined $knownParam{$cmdlineName} && $knownParam{$cmdlineName} == 0) {
+            push(@unknownParam, $cmdlineName) if($cmdlineName =~ /^-/);
+        }
+    }
+
+
+    ### Catch unknown parameters ###############################################
+    if (@unknownParam && ${$paramsRef}{"UNKNOWN"} && ref(${$paramsRef}{"UNKNOWN"}) eq "CODE") {
+        print "WARNING: Unknown or non-set parameters detected:\n";
+        for (@unknownParam) { print "        \"$_\"\n"; }
+        &{${$paramsRef}{"UNKNOWN"}}();
+    }
+    elsif (@unknownParam) {
+        print "ERROR: Unknown or non-set parameters detected:\n";
+        for(@unknownParam) { print "       \"$_\"\n"; }
+        exit;
+    }
+    ############################################################################
+
+
+    ### Catch no given parameters ##############################################
+    if (!@ARGV && ${$paramsRef}{"NOPARAM"} && ref(${$paramsRef}{"NOPARAM"}) eq "CODE") {
+        print "WARNING: Parameters needed...\n";
+        &{${$paramsRef}{"NOPARAM"}}();
+    }
+    ############################################################################
+}
+################################################################################
+
+
+
+################################################################################
+### GROFiles specific part #####################################################
+################################################################################
+package GROFiles;
+
+sub readGro {
+    my $groFile = shift;
+    my %groData;
+
+    print "  ---------------------------------\n  Read GRO file \"$groFile\"...\r";
+    open(GROFILE, "<$groFile") || die "ERROR: Cannot open GRO file \"$groFile\": $!\n";
+    readHeader(\*GROFILE, \%groData);
+    readCoords(\*GROFILE, \%groData);
+    readFooter(\*GROFILE, \%groData);
+    close(GROFILE);
+    print "  Read GRO file \"$groFile\": Finished\n  ---------------------------------\n\n";
+
+    return %groData;
+}
+
+
+
+sub readHeader {
+    my $fileHandle = shift;
+    my $groDataRef = shift;
+
+    $$groDataRef{'title'}  = <$fileHandle>;
+    $$groDataRef{'title'}  =~ s/(^\s*)|(\s*$)//g;
+    $$groDataRef{'nAtoms'} = <$fileHandle>;
+    $$groDataRef{'nAtoms'} =~ s/\s//g;
+
+    print "\n    Number of atoms: " . $$groDataRef{'nAtoms'} . "\n" if $main::verbose;
+}
+
+
+
+sub readFooter {
+    my $fileHandle = shift;
+    my $groDataRef = shift;
+    my $verbose    = shift || 0;
+
+    $$groDataRef{'footline'} = <$fileHandle>;
+    $$groDataRef{'footline'} =~ s/(^\s*)|(\s*$)//g;
+    if ($$groDataRef{'footline'} =~ /([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)/) {
+        $$groDataRef{'box'}{'cooX'} = $1;
+        $$groDataRef{'box'}{'cooY'} = $3;
+        $$groDataRef{'box'}{'cooZ'} = $5;
+
+        print "\n    Boxsize: x=$1, y=$3, z=$5\n" if $main::verbose;
+    }
+}
+
+
+
+sub readCoords {
+    my $fileHandle = shift;
+    my $groDataRef = shift;
+    my $atomId     = 0;
+
+    while (<$fileHandle>) {
+        chomp($_);
+        $$groDataRef{'atoms'}[++$atomId] = getAtomdata($_) unless ($_ =~ /^\s*$/);
+        print "    Read atom data:  $atomId\r" if $main::verbose;
+        return 1 if ($atomId == $$groDataRef{'nAtoms'});
+    }
+    return 0; # If file ends before all atoms were count.
+}
+
+
+
+sub getAtomdata {
+    my $atomStr = shift;
+    my $strLen  = length($atomStr);
+    my %atomData;
+
+    $atomData{'resId'}    = checkSubstr($atomStr, $strLen,  0, 5);
+    $atomData{'resName'}  = checkSubstr($atomStr, $strLen,  5, 5);
+    $atomData{'atomName'} = checkSubstr($atomStr, $strLen, 10, 5);
+    $atomData{'atomNum'}  = checkSubstr($atomStr, $strLen, 15, 5);
+    $atomData{'cooX'}     = checkSubstr($atomStr, $strLen, 20, 8);
+    $atomData{'cooY'}     = checkSubstr($atomStr, $strLen, 28, 8);
+    $atomData{'cooZ'}     = checkSubstr($atomStr, $strLen, 36, 8);
+    $atomData{'velX'}     = checkSubstr($atomStr, $strLen, 44, 8);
+    $atomData{'velY'}     = checkSubstr($atomStr, $strLen, 52, 8);
+    $atomData{'velZ'}     = checkSubstr($atomStr, $strLen, 60, 8);
+
+    return \%atomData;
+}
+
+
+
+sub checkSubstr {
+    my $str       = shift;
+    my $strLen    = shift;
+    my $start     = shift;
+    my $substrLen = shift;
+    my $substr    = '';
+
+    if ($strLen >= ($start+$substrLen)) {
+        $substr = substr($str, $start, $substrLen);
+        $substr =~ s/\s//g;
+    }
+    return $substr;
+}
+################################################################################
+
+
+
+################################################################################
+### PDBFiles specific part #####################################################
+################################################################################
+package PDBFiles;
+
+sub readPdb {
+    my $pdbFile = shift;
+    my %pdbData;
+
+    print "  ---------------------------------\n  Read PDB file \"$pdbFile\"...\r";
+    open(PDBFILE, "<$pdbFile") || die "ERROR: Cannot open PDB file \"$pdbFile\": $!\n";
+    readCoords(\*PDBFILE, \%pdbData);
+    close(PDBFILE);
+    print "  Read PDB file \"$pdbFile\": Finished\n  ---------------------------------\n\n";
+
+    return %pdbData;
+}
+
+
+
+sub readCoords {
+    my $fileHandle = shift;
+    my $pdbDataRef = shift;
+    my $atomId     = 0;
+
+    while (<$fileHandle>) {
+        chomp($_);
+        if ($_ =~ /^ATOM\s+/) {
+            $$pdbDataRef{'atoms'}[++$atomId] = getAtomdata($_) unless ($_ =~ /^\s*$/);
+            print "    Read atom data:  $atomId\r" if $main::verbose;
+        }
+    }
+    return 1;
+}
+
+
+
+sub getAtomdata {
+    my $atomStr = shift;
+    my $strLen = length($atomStr);
+    my %atomData;
+
+    $atomData{'atomNum'}    = checkSubstr($atomStr, $strLen, 6, 5);
+    $atomData{'atomName'}   = checkSubstr($atomStr, $strLen, 12, 4);
+    $atomData{'altLoc'}     = checkSubstr($atomStr, $strLen, 16, 1);
+    $atomData{'resName'}    = checkSubstr($atomStr, $strLen, 17, 3);
+    $atomData{'chainId'}    = checkSubstr($atomStr, $strLen, 21, 1);
+    $atomData{'resId'}      = checkSubstr($atomStr, $strLen, 22, 4);
+    $atomData{'iCode'}      = checkSubstr($atomStr, $strLen, 26, 1);
+    $atomData{'cooX'}       = checkSubstr($atomStr, $strLen, 30, 8);
+    $atomData{'cooY'}       = checkSubstr($atomStr, $strLen, 38, 8);
+    $atomData{'cooZ'}       = checkSubstr($atomStr, $strLen, 46, 8);
+    $atomData{'occupancy'}  = checkSubstr($atomStr, $strLen, 54, 6);
+    $atomData{'tempFactor'} = checkSubstr($atomStr, $strLen, 60, 6);
+    $atomData{'element'}    = checkSubstr($atomStr, $strLen, 76, 2);
+    $atomData{'charge'}     = checkSubstr($atomStr, $strLen, 78, 2);
+
+    return \%atomData;
+}
+
+
+
+sub checkSubstr {
+    my $str       = shift;
+    my $strLen    = shift;
+    my $start     = shift;
+    my $substrLen = shift;
+    my $substr    = '';
+
+    if ($strLen >= ($start+$substrLen)) {
+        $substr = substr($str, $start, $substrLen);
+        $substr =~ s/\s//g;
+    }
+    return $substr;
+}
+################################################################################
+
+
+
+################################################################################
+### Protonator specific part ###################################################
+################################################################################
+package Protonator;
+
+sub readAaList {
+    my $aaListFile = shift;
+    my @aaListData;
+
+    print "  ---------------------------------\n  Read amino acid list file \"$aaListFile\"...\r";
+    open(AALFILE, "<$aaListFile") || die "ERROR: Cannot open amino acid list file \"$aaListFile\": $!\n";
+
+    while (<AALFILE>) {
+        chomp($_);
+        if ($_ =~ /^\s*([A-Za-z]{3,4})\s+(\d+)\s+([dp])\s*$/) {
+            my %tmpHash;
+            $tmpHash{'resName'} = $1;
+            $tmpHash{'resId'}   = $2,
+            $tmpHash{'pState'}  = $3;
+            push(@aaListData, \%tmpHash);
+        }
+        elsif ($_ =~ /^\s*([A-Za-z0-9])\s+([A-Za-z]{3,4})\s+(\d+)\s+([dp])\s*$/) {
+            my %tmpHash;
+            $tmpHash{'chainId'} = $1;
+            $tmpHash{'resName'} = $2;
+            $tmpHash{'resId'}   = $3,
+            $tmpHash{'pState'}  = $4;
+            push(@aaListData, \%tmpHash);
+        }
+    }
+
+    close(AALFILE);
+    print "  Read amino acid list file \"$aaListFile\": Finished\n  ---------------------------------\n\n";
+
+    return @aaListData;
+}
+
+
+
+sub getProtoStatePdb {
+    my $resNameIdsRef = shift;
+    my $aaListDataRef = shift;
+    my %defaultState  = ('LYS' => 1,
+                         'ARG' => 1,
+                         'GLN' => 0,
+                         'ASP' => 0,
+                         'GLU' => 0);
+    my %pStates;
+    my @fixed;
+    my @chainIdOrder;
+    my %chainIdAlreadySet;
+
+    for (my $i=0; $i<@pdb2gmxAaOrder; $i++) {
+        my $resName = $pdb2gmxAaOrder[$i];
+        for (my $j=0; $j<@{$resNameIds{$resName}}; $j++) {
+            my $resId   = $resNameIds{$resName}[$j]{'resId'};
+            my $chainId = $resNameIds{$resName}[$j]{'chainId'};
+
+            push(@chainIdOrder, $chainId) unless $chainIdAlreadySet{$chainId};
+            $chainIdAlreadySet{$chainId} = 1;
+
+            for (my $k=0; $k<@aaListData; $k++) {
+                if ($resName =~ /^$aaListData[$k]{'resName'}/i && $chainId =~ /^$aaListData[$k]{'chainId'}/i) {
+                    if ($resId == $aaListData[$k]{'resId'}) {
+                        if ($aaListData[$k]{'pState'} eq 'p') {
+                            $pStates{$chainId}{$resName}[$resId] = 1;
+#                            $pStates{$resName}[$resId] = "$resName $resId 1";
+                            $fixed[$resId] = 1;
+                            print "      Protonate   $resName $resId\n" if $main::verbose;
+                        }
+                        elsif ($aaListData[$k]{'pState'} eq 'd') {
+                            $pStates{$chainId}{$resName}[$resId] =  0;
+#                            $pStates{$resName}[$resId] =  "$resName $resId 0";
+                            $fixed[$resId] = 1;
+                            print "      Deprotonate $resName $resId\n" if $main::verbose;
+                        }
+                    }
+                    elsif (!$fixed[$resId]) {
+                        $pStates{$chainId}{$resName}[$resId] = $defaultState{$resName};
+                    }
+                }
+                elsif (!$fixed[$resId]) {
+                    $pStates{$chainId}{$resName}[$resId] = $defaultState{$resName};
+                }
+            }
+        }
+    }
+    return (\%pStates, \@chainIdOrder);
+}
+
+
+
+sub getProtoStateGro {
+    my $resNameIdsRef = shift;
+    my $aaListDataRef = shift;
+    my %pStates;
+    my @fixed;
+
+    for (my $i=0; $i<@pdb2gmxAaOrder; $i++) {
+        my $resName = $pdb2gmxAaOrder[$i];
+        for (my $j=0; $j<@{$resNameIds{$resName}}; $j++) {
+            my $resId = $resNameIds{$resName}[$j]{'resId'};
+            for (my $k=0; $k<@{$aaListDataRef}; $k++) {
+                if ($resName =~ /^$aaListData[$k]{'resName'}/i) {
+                    if ($resId == $$aaListDataRef[$k]{'resId'}) {
+                        if ($$aaListDataRef[$k]{'pState'} eq 'p') {
+                            $pStates{$resName}[$resId] = 1;
+#                            $pStates{$resName}[$resId] = "$resName $resId 1";
+                            $fixed[$resId] = 1;
+                            print "      Protonate   $resName $resId\n" if $main::verbose;
+                        }
+                        elsif ($$aaListDataRef[$k]{'pState'} eq 'd') {
+                            $pStates{$resName}[$resId] =  0;
+#                            $pStates{$resName}[$resId] =  "$resName $resId 0";
+                            $fixed[$resId] = 1;
+                            print "      Deprotonate $resName $resId\n" if $main::verbose;
+                        }
+                    }
+                    elsif (!$fixed[$resId]) {
+                        $pStates{$resName}[$resId] = getDefaultState($resNameIds{$resName}[$j]{'resName'});
+                    }
+                }
+                elsif (!$fixed[$resId]) {
+                    $pStates{$resName}[$resId] = getDefaultState($resNameIds{$resName}[$j]{'resName'});
+                }
+            }
+        }
+    }
+
+    return \%pStates;
+}
+
+
+
+sub getDefaultState {
+    return 1 if $_[0] =~ /(LYSH$|ARG$|QLN$|ASPH$|GLUH$)/;
+    return 0;
+}
+
+
+
+sub writeAnswFilePdb {
+    my $answerFile      = shift;
+    my $pStatesRef      = shift;
+    my $chainIdOrderRef = shift;
+
+    open(ANSWERFILE, ">$answerFile") || die "ERROR: Cannot open file \"$answerFile\": $!\n";
+    print ANSWERFILE (4 . "\n"); # Default force field.
+    for (my $m=0; $m<@{$chainIdOrderRef}; $m++) {
+        my $chainId = $$chainIdOrderRef[$m];
+        for (my $i=0; $i<@pdb2gmxAaOrder; $i++) {
+            my $resName = $pdb2gmxAaOrder[$i];
+            for (my $resId=0; $resId<@{$$pStatesRef{$chainId}{$resName}}; $resId++) {
+                print ANSWERFILE ($$pStatesRef{$chainId}{$resName}[$resId] . "\n") if defined($$pStatesRef{$chainId}{$resName}[$resId]);
+            }
+        }
+    }
+    close(ANSWERFILE);
+}
+
+
+
+sub writeAnswFileGro {
+    my $answerFile = shift;
+    my $pStatesRef = shift;
+
+    open(ANSWERFILE, ">$answerFile") || die "ERROR: Cannot open file \"$answerFile\": $!\n";
+    print ANSWERFILE (4 . "\n"); # Default force field.
+    for (my $i=0; $i<@pdb2gmxAaOrder; $i++) {
+        my $resName = $pdb2gmxAaOrder[$i];
+        for (my $resId=0; $resId<@{$$pStatesRef{$resName}}; $resId++) {
+            print ANSWERFILE ($$pStatesRef{$resName}[$resId] . "\n") if defined($$pStatesRef{$resName}[$resId]);
+        }
+    }
+    close(ANSWERFILE);
+}
+################################################################################
+

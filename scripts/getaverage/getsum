@@ -1,0 +1,138 @@
+#!/usr/bin/perl -w
+
+
+### Load Packages #######################################
+use strict;
+use IO::Handle;
+use FindBin qw($Bin); # Absolute path to ->this<- script (Global).
+use lib $Bin."/modules";
+use Fcntl;
+autoflush STDOUT 1; # For direct output.
+
+use cmdlineparser;
+#########################################################
+
+
+
+### Default Parameters ##################################
+my $inputFile = "file.in";
+my $outFile = "file.out";
+my $numOfLines = 20;
+my $column = 2;
+#########################################################
+
+
+
+### Internal parameters #################################
+my @tmpRefs; # Filled by some subroutines.
+my @blocks;
+
+my %jobStrings;
+#########################################################
+
+
+
+### Commandline-Parameters ##############################
+my %cmdLParam = ("i" => \$inputFile,
+                 "o" => \$outFile,
+                 "n" => \$numOfLines,
+                 "col" => \$column,
+                 "help=f" => \&command_help,
+                 "?=f" => \&command_help,
+                 "h=f" => \&command_help);
+cmdlineparser(\%cmdLParam);
+#########################################################
+
+
+
+### Read input file #####################################
+print "----------------------------------------------------------\n";
+print " Loading input file \"$inputFile\"...\n";
+
+@blocks = read_inputfile($inputFile);
+print "   Found ".(scalar(@blocks)-1)." blocks\n";
+print "----------------------------------------------------------\n\n";
+#########################################################
+
+
+
+### Calculate and write out ############################# 
+print "----------------------------------------------------------\n";
+print " Calculate sums...\n";
+
+open(OUTFILE, ">$outFile") or die "ERROR: Cannot open output file \"$outFile\": $!\n";
+for (my $i=1; $i<@blocks; $i++) {
+    print "   Analyzing block ".$blocks[$i]{"blockname"}."\r";
+    my @prepValues;
+    for(@{$blocks[$i]{"values"}}) {
+        my @tempArray = split(/\s+/, $_);
+        if(defined $tempArray[($column-2)]) {
+            push(@prepValues, $tempArray[($column-2)]);
+        }
+        else {
+            print "WARNING: Column ".($column-2)." does not exist for block ".$blocks[$i]{"blockname"}." (Line: \"$_\")\n";
+        }
+    }
+    my $sum = calcsum(\@prepValues, $numOfLines);
+    print OUTFILE $blocks[$i]{"blockname"}." ".$sum."\n";
+}
+close(OUTFILE);
+print "\n----------------------------------------------------------\n";
+#########################################################
+
+
+
+#########################################################
+### Subroutines #########################################
+#########################################################
+sub command_help {
+    print "Example: ./getaverage -i ave_mass_density -n 2 --col 2\n";
+    print "NOTE: Always copy the modules directory with this script\n";
+    exit;
+}
+
+
+sub calcsum {
+    my $valuesRef = shift;
+    my $numOfLines = shift;
+
+    my $sum = 0;
+
+    for(my $i=0; $i<$numOfLines; $i++) {
+        $sum += ${$valuesRef}[$i];
+    }
+
+    return $sum;
+}
+
+
+sub read_inputfile {
+    my $inputFile = shift;
+
+    my @inputBlocks;
+    my $currBlockID = 0; # Notice: Starts at 1 in the final datastructure.
+    my $blockLineID = 0;
+    my $blockLastID = 0;
+
+    open(INFILE, "<$inputFile") or die "ERROR: Cannot open input file \"$inputFile\": $!\n";
+    while(<INFILE>) {
+        chomp($_);
+        if($_ =~ /^\s*#/) {
+            next;
+        }
+        elsif($_ =~ /^\s*(\d+)\s+(.+)$/ and $blockLineID < $blockLastID) {
+            push(@{$inputBlocks[$currBlockID]{"values"}}, $2);
+            $blockLineID++;
+        }
+        elsif($_ =~ /^\s*(\d+)\s+(\d+)\s*$/ and $blockLineID == $blockLastID) {
+            $currBlockID++;
+            $inputBlocks[$currBlockID]{"blockname"} = $1;
+            $blockLineID = 0;
+            $blockLastID = $2;
+        }
+    }
+    close(INFILE);
+
+    return @inputBlocks;
+}
+#########################################################
