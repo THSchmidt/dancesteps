@@ -120,7 +120,7 @@ for (my $i=0; $i<@ndxAnalysisGroupIds; $i++) {
     ### Preparation ############################################################
     my $thisAvgStruct = sprintf("%s.avg.%02d.pdb", $anaGroupName, 0);
     system("echo " . $ndxAnalysisGroupIds[$i] . " | trjconv -s $coordInFile -f $xtcInFile -n $ndxInFile -o " . $anaGroupName . ".selected.xtc -b " . $timeRange{'range'}{'min'} . " -pbc nojump >>$logFile 2>&1"); # Extract the selected atoms over time.
-    system("echo " . $ndxAnalysisGroupIds[$i] . " | g_rmsf -s $coordInFile -f $xtcInFile -n $ndxInFile -ox $thisAvgStruct -fit >>$logFile 2>&1");
+    system("echo " . $ndxAnalysisGroupIds[$i] . " | g_rmsf -s $coordInFile -f $xtcInFile -n $ndxInFile -ox $thisAvgStruct -b " . $timeRange{'range'}{'min'} . " -fit >>$logFile 2>&1");
     system("rm rmsf.xvg"); # Clean up.
     ############################################################################
 
