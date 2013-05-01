@@ -130,7 +130,6 @@ for (my $i=0; $i<@ndxGroupIds; $i++) {
         next unless $zCoordsPerUResId[$j];
         $zMean[$j] < $bilayerZCenter ? $lowerUResIds[$j] = 1 : $upperUResIds[$j] = 1;
     }
-#    print "Upper: " . scalar(@upperUResIds
 
     my @upperAtomIds;
     my @lowerAtomIds;

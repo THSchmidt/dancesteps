@@ -4,6 +4,12 @@ use strict;
 use FindBin qw($Bin); # Absolute path to THIS script.
 
 my @fileNames = @ARGV;
+my $selProt = 0;
+
+if ($fileNames[0] eq '-p') {
+#    $selProt = 1;
+    pop(@fileNames);
+}
 
 
 foreach (@fileNames) {
@@ -21,10 +27,21 @@ foreach (@fileNames) {
 
 
         my @ndxData = NDXFiles::read($ndxFile); # Read input NDX file.
-        my $proteinNdxGroup = NDXFiles::getGroupByName(\@ndxData, '^\s*Protein\s*$');
 
-        if (defined $proteinNdxGroup) {
-            write_makeNdxAnswerFile("temp.make_ndx.answers", "$proteinNdxGroup & chain " . $chains[$i] .  "\nq\n");
+        if ($selProt) {
+            my $proteinNdxGroup = NDXFiles::getGroupByName(\@ndxData, '^\s*Protein\s*$');
+
+            if (defined $proteinNdxGroup) {
+                write_makeNdxAnswerFile("temp.make_ndx.answers", "$proteinNdxGroup & chain " . $chains[$i] .  "\nq\n");
+                system("make_ndx -f $pdbFile -o $ndxFile <temp.make_ndx.answers");
+
+                system("echo " . scalar(@ndxData) . " | editconf -f $pdbFile -n $ndxFile -o " . $pdbId . "_chain" . $chains[$i] . ".pdb");
+
+                system("babel -ipdb " . $pdbId . "_chain" . $chains[$i] . ".pdb -ofasta " . $pdbId . "_chain" . $chains[$i] . ".fasta");
+            }
+        }
+        else {
+            write_makeNdxAnswerFile("temp.make_ndx.answers", "chain " . $chains[$i] .  "\nq\n");
             system("make_ndx -f $pdbFile -o $ndxFile <temp.make_ndx.answers");
 
             system("echo " . scalar(@ndxData) . " | editconf -f $pdbFile -n $ndxFile -o " . $pdbId . "_chain" . $chains[$i] . ".pdb");
