@@ -1,4 +1,4 @@
-# Copyright 2012 Thomas H. Schmidt
+# Copyright 2013 Thomas H. Schmidt
 #
 # This file is part of DanceSteps.
 #
@@ -99,7 +99,7 @@ sub variance {
     return unless $vectorRef;
     return unless scalar(@{$vectorRef});
     $mean = mean($vectorRef) unless defined $mean;
-    return unless $mean;
+    return 0 unless $mean;
 
     for (my $i=0; $i<@{$vectorRef}; $i++) {
         next unless defined $$vectorRef[$i];
@@ -123,7 +123,7 @@ sub stddev {
     unless (defined $variance) {
         $variance = defined $mean ? variance($vectorRef, $mean) : variance($vectorRef);
     }
-    return unless $variance;
+    return 0 unless $variance;
 
     return sqrt($variance);
 }
@@ -140,13 +140,13 @@ sub all {
     return unless scalar(@{$vectorRef});
 
     $mean     = mean($vectorRef);
-    return unless $mean;
+    return unless defined $mean;
 
     $variance = variance($vectorRef, $mean);
-    return unless $variance;
+    return unless defined $variance;
 
     $stddev = stddev($vectorRef, $variance, $mean);
-    return unless $stddev;
+    return unless defined $stddev;
 
     return ($mean, $variance, $stddev);
 }

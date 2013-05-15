@@ -1,0 +1,1203 @@
+#!/usr/bin/perl -w
+
+# Copyright 2012 Thomas H. Schmidt
+#
+# This file is part of DanceSteps.
+#
+# DanceSteps is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# any later version.
+#
+# DanceSteps is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+### Load Packages ##############################################################
+use strict;
+use IO::Handle;
+use FindBin qw($RealBin); # Absolute path to THIS script.
+use lib ($RealBin."/modules/FileIO", $RealBin."/modules");
+autoflush STDOUT 1; # For direct output.
+
+use Commandline;
+use FileIO::Xvg;
+use Statistics;
+################################################################################
+
+
+
+### Default Parameters #########################################################
+our $version        = "rc1";              # Version number.
+our $year           = "2013";             # Year (of change).
+
+our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
+
+my @xvgInFiles;                           # Input XVG files.
+
+my $helpAndQuit     = 0;                  # Print out program help.
+################################################################################
+
+
+
+### Internal parameters ########################################################
+my %coordData;         # Filled by "GROFiles::readGro(<GROFILE>)".
+my @ndxData;           # Filled by "NDXFiles::readNdx(<NDXFILE>)".
+my @thickNdxGroupIds;  # Filled by "NDXFiles::selectGroupIds(...)".
+my @vsDistNdxGroupIds; # Filled by "NDXFiles::selectGroupIds(...)".
+################################################################################
+
+
+
+### Print out program headlines ################################################
+printHead();
+################################################################################
+
+
+
+### Handle commandline parameters ##############################################
+#addCmdlParam('scalar', 's',       'Input',       \$coordInFile,                $coordInFile, 'Structure file: gro');
+addCmdlParam('array',  'f',       'Input, Mult.',\@xvgInFiles,                scalar(@xvgInFiles) ? join(" ", @xvgInFiles) : '-1', 'xvgr file');
+#addCmdlParam('scalar', 'n',       'Input, Opt.', \$ndxInFile,                  $ndxInFile, 'Index file');
+addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
+#addCmdlParam('scalar', 'b',       'time',        \$timeRange{'range'}{'min'},  ($timeRange{'range'}{'min'} ? $timeRange{'range'}{'min'} : 'no'), 'First frame (ps) to read from trajectory');
+#addCmdlParam('scalar', 'e',       'time',        \$timeRange{'range'}{'max'},  $timeRange{'range'}{'max'} ? $timeRange{'range'}{'max'} : 0, 'Last frame (ps) to read from trajectory');
+#addCmdlParam('scalar', 'dt',      'time',        \$timeRange{'range'}{'step'}, $timeRange{'range'}{'step'} ? $timeRange{'range'}{'step'} : 0, '');
+#addCmdlParam('array',  'dump',    'time',        \@{$timeRange{'dump'}},       $timeRange{'dump'} ? join(" ", @{$timeRange{'dump'}}) : '-1', 'Dump frame nearest specified time (ps)');
+#addCmdlParam('scalar', 'dx',      'real',        \$gridDeltaX,                 $gridDeltaX, 'Grid spacing along the X axis');
+#addCmdlParam('scalar', 'dy',      'real',        \$gridDeltaY,                 $gridDeltaY, 'Grid spacing along the Y axis');
+#addCmdlParam('scalar', 'dz',      'real',        \$gridDeltaZ,                 $gridDeltaZ, 'Grid spacing along the Z axis');
+#addCmdlParam('scalar', 'd',       'real',        \$alongAxis,                  $alongAxis, 'Axis for distance calculation.');
+#addCmdlParam('flag',   'pbcwrap', 'bool',        \$pbcWrap,                    $pbcWrap ? 'yes' : 'no', 'Wrap the coordinates at the edges of the box.');
+#addCmdlParam('flag',   'vsdist',  'bool',        \$vsDist,                     $vsDist ? 'yes' : 'no', 'Measure the thickness of group 1 as a function of distance to group 2 (NDX file required).');
+addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
+#addCmdlParam('scalar', 'lr',      'string',      \$groupResname,               $groupResname, 'Regex for the detection of the bilayer atoms of the membrane GRO file (obsolete if a membrane NDX file is given)');
+
+cmdlParser();
+################################################################################
+
+
+my @xvgData;
+
+### Print program help if the user set the flag ################################
+printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
+################################################################################
+
+
+### Read the XVG files #########################################################
+printHelp(getCmdlParamRef(), 1) unless scalar(@xvgInFiles);
+
+my $nLines = 0;
+
+for (my $i=0; $i<@xvgInFiles; $i++) {
+    my %tmpXvgData = FileIO::XVG::readXvg($xvgInFiles[$i]); # Read the XVG file.
+    $xvgData[$i] = \%tmpXvgData;
+
+    $nLines = @{$tmpXvgData{'values'}} unless $nLines;
+    die "ERROR: Unequal number of values in the files.\n" unless scalar(@{$tmpXvgData{'values'}}) == $nLines;
+}
+################################################################################
+
+
+### Calculate the average for columns of different files per line ##############
+my @valuesPerLineOfCol;
+my @meanPerLineOfCol;
+my @variPerLineOfCol;
+my @stddPerLineOfCol;
+my $nCols = 0;
+for (my $line=0; $line<@{$xvgData[0]{'values'}}; $line++) {
+    if (ref($xvgData[0]{'values'}[$line]) eq 'ARRAY') {
+#        print "Line $line has " . scalar(@{$xvgData[0]{'values'}[$line]}) . " columns\n";
+        
+        for (my $i=0; $i<@xvgInFiles; $i++) {
+            for (my $col=0; $col<@{$xvgData[$i]{'values'}[$line]}; $col++) {
+                push(@{$valuesPerLineOfCol[$line][$col]}, $xvgData[$i]{'values'}[$line][$col]);
+#                print $valuesPerLineOfCol[$line][$col][-1] . "  :: $line -  ";
+            }
+#            print "\n";
+        }
+    }
+
+    for (my $col=0; $col<@{$valuesPerLineOfCol[$line]}; $col++) {
+        my @statistics = Statistics::all(\@{$valuesPerLineOfCol[$line][$col]});
+#        print join("   ", @{$valuesPerLineOfCol[$line][$col]}) . " :: Mean = " . $statistics[0] . "\n";
+        $meanPerLineOfCol[$line][$col] = $statistics[0];
+        $variPerLineOfCol[$line][$col] = $statistics[1];
+        $stddPerLineOfCol[$line][$col] = $statistics[2];
+        $nCols = $col;
+    }
+}
+################################################################################
+#exit;
+$nCols++;
+for (my $col=0; $col<$nCols; $col++) {
+    my $outFilename = sprintf("column_%d.xvg", $col);
+    open(OUTFILE, ">$outFilename") || die "ERROR: Cannot open output file \"$outFilename\": $!\n";
+    print OUTFILE ("#MEAN VARIANCE STDDEV\n");
+    for (my $line=0; $line<@meanPerLineOfCol; $line++) {
+        printf OUTFILE ("%s   %s   %s   %s\n", $xvgData[0]{'values'}[$line][0], $meanPerLineOfCol[$line][$col], $variPerLineOfCol[$line][$col], $stddPerLineOfCol[$line][$col]);
+    }
+    close(OUTFILE);
+}
+
+
+#my @valuesPerCol;
+#for (my $line=0; $line<@{$xvgData[0]{'values'}}; $line++) {
+#    if (ref($xvgData[0]{'values'}[$line]) eq 'ARRAY') {
+#        print "Line $line has " . scalar(@{$xvgData[0]{'values'}[$line]}) . " columns\n";
+#        for (my $col=0; $col<@{$xvgData[0]{'values'}[$line]}; $col++) {
+#            push(@{$valuesPerCol[$col]}, $xvgData[0]{'values'}[$line][$col]);
+#        }
+#    }
+#}
+
+
+### Print out statistics #######################################################
+#my @allValues = matrix2D2Vector($profile2DRef);
+#my @statistics = Statistics::all(\@allValues);
+#print $statistics[0] . " = mean\n";
+#print $statistics[1] . " = variance\n";
+#print $statistics[2] . " = stddev\n";
+################################################################################
+
+
+
+
+sub matrix2D2Vector {
+    my $matrix2DRef = shift;
+    my @vector;
+
+    for (my $x=0; $x<@{$matrix2DRef}; $x++) {
+        next unless $$matrix2DRef[$x];
+        for (my $y=0; $y<@{$$matrix2DRef[$x]}; $y++) {
+            next unless $$matrix2DRef[$x][$y];
+            push(@vector, $$matrix2DRef[$x][$y]);
+        }
+    }
+
+    return unless scalar(@vector);
+    return @vector;
+}
+
+
+################################################################################
+### Subroutines ################################################################
+################################################################################
+sub printHead {
+    my @headLines = ("################################################################################",
+                     "",
+                     "get_xvgavg $version",
+                     "Calculate the mean, variance and std. deviation of a set of XVG data.",
+                     "Copyright Thomas H. Schmidt, $year",
+                     "",
+                     "http://code.google.com/p/dancesteps",
+                     "",
+                     "DanceSteps comes with ABSOLUTELY NO WARRANTY.",
+                     "This is free software, and you are welcome to redistribute it",
+                     "under certain conditions; type `-copyright' for details.",
+                     "",
+                     "################################################################################");
+    my $maxLength = 80;
+    foreach (@headLines) {
+        $maxLength = (length $_ > $maxLength) ? length($_) : $maxLength;
+    }
+
+    foreach (@headLines) {
+        printf "%s%-${maxLength}s\n", ' ' x int(($maxLength - length($_))/2), $_;
+    }
+}
+
+
+
+sub printFoot {
+    print <<EndOfFoot;
+Please cite:
+  [1] Schmidt, T. H. get_xvgavg: (Manual)
+
+EndOfFoot
+}
+
+
+
+sub printHelp {
+    my $cmdLParamRef   = shift;
+    my $quitAfterPrint = shift;
+
+
+    print <<EndOfHelp;
+DESCRIPTION
+-----------
+get_xvgavg reads an XVG data file and calculates the average, variance and
+standard deviation.
+
+USAGE: get_xvgavg -f XVGFILE
+
+EndOfHelp
+
+    printParamHelp($cmdLParamRef);
+
+    printFoot();
+
+    exit if $quitAfterPrint;
+}
+
+
+
+sub printCopyright {
+    print <<"EndOfCopyright";
+Tango is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+any later version.
+
+Tango is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with Tango; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+EndOfCopyright
+    exit;
+}
+
+
+
+#sub cmdlineParser {
+#    my $paramsRef = shift;
+#
+#    my %knownParam;
+#    my @unknownParam;
+#
+#    for (my $argID=0; $argID<@ARGV; $argID++) {
+#        my $cmdlineName = $ARGV[$argID];
+#        $knownParam{$ARGV[$argID]} = 0;
+#
+#        foreach my $paramKey (keys %{$paramsRef}) {
+#            my $paramName = $paramKey;
+#            my $paramType = 0;
+#            my $paramIni  = "--";
+#            my $isArray   = 0;
+#
+#            if ($paramKey =~ /^(.+?)=([\@f])$/) {
+#                $paramName = $1;
+#                $paramType = $2;
+#            }
+#
+#            $paramIni = "-" if (length($paramName) == 1);
+#
+#            if ($paramType eq "@") {
+#                $isArray = 1;
+#            }
+#            elsif ($paramType eq "f") {
+#                if ($cmdlineName eq $paramIni.$paramName) {
+#                    if (ref(${$paramsRef}{$paramKey}) eq "SCALAR") {
+#                        ${${$paramsRef}{$paramKey}} = 1;
+#                        $knownParam{$cmdlineName} = 1;
+#                    }
+#                    elsif (ref(${$paramsRef}{$paramKey}) eq "CODE") {
+#                        &{${$paramsRef}{$paramKey}}();
+#                        $knownParam{$cmdlineName} = 1;
+#                    }
+#                }
+#                next;
+#            }
+#
+#            if ($cmdlineName eq $paramIni.$paramName && not $isArray) {
+#                $argID++;
+#                next if($ARGV[$argID] =~ /^-/);
+#
+#                ${${$paramsRef}{$paramKey}} = $ARGV[$argID];
+#                $knownParam{$cmdlineName} = 1;
+#            }
+#            elsif ($ARGV[$argID] eq $paramIni.$paramName && $isArray) {
+#                $knownParam{$cmdlineName} = 1;
+#                $argID++;
+#
+#                my @tmpArray;
+#                while ($argID <= $#ARGV && not $ARGV[$argID] =~ /^--/ && not $ARGV[$argID] =~ /^-.$/) {
+#                    push (@tmpArray, $ARGV[$argID]);
+#                    $argID++;
+#                }
+#                @{${$paramsRef}{$paramKey}} = @tmpArray;
+#                $argID--;
+#            }
+#        }
+#
+#        if (defined $knownParam{$cmdlineName} && $knownParam{$cmdlineName} == 0) {
+#            push(@unknownParam, $cmdlineName) if($cmdlineName =~ /^-/);
+#        }
+#    }
+#
+#
+#    ### Catch unknown parameters ###############################################
+#    if (@unknownParam && ${$paramsRef}{"UNKNOWN"} && ref(${$paramsRef}{"UNKNOWN"}) eq "CODE") {
+#        print "WARNING: Unknown or non-set parameters detected:\n";
+#        for (@unknownParam) { print "        \"$_\"\n"; }
+#        &{${$paramsRef}{"UNKNOWN"}}();
+#    }
+#    elsif (@unknownParam) {
+#        print "ERROR: Unknown or non-set parameters detected:\n";
+#        for(@unknownParam) { print "       \"$_\"\n"; }
+#        exit;
+#    }
+#    ############################################################################
+#
+#
+#    ### Catch no given parameters ##############################################
+#    if (!@ARGV && ${$paramsRef}{"NOPARAM"} && ref(${$paramsRef}{"NOPARAM"}) eq "CODE") {
+#        print "\nWARNING: Parameters needed...\n\n";
+#        &{${$paramsRef}{"NOPARAM"}}();
+#    }
+#    ############################################################################
+#}
+
+
+
+sub inflateBoxXY {
+    $_[0]{'cooX'} *= $_[1];
+    $_[0]{'cooY'} *= $_[1];
+}
+
+
+
+sub centerGroupXY {
+    my $atomIdsRef = shift;
+    my $coordsRef  = shift;
+    my $boxRef     = shift;
+
+    my %groupGeoCenter = getGeoCenterXY($atomIdsRef, $coordsRef);
+    my %translVector = ('cooX' => ($$boxRef{'cooX'}*0.5-$groupGeoCenter{'cooX'}),
+                        'cooY' => ($$boxRef{'cooY'}*0.5-$groupGeoCenter{'cooY'}));
+    foreach (@{$atomIdsRef}) {
+        $$coordsRef[$_]{'cooX'} += $translVector{'cooX'};
+        $$coordsRef[$_]{'cooY'} += $translVector{'cooY'};
+    }
+}
+
+
+
+sub getGeoCenterXY {
+    my $atomIdsRef = shift;
+    my $coordsRef  = shift;
+    my %geoCenter  = ('cooX' => 0,
+                      'cooY' => 0);
+
+    foreach (@{$atomIdsRef}) {
+        $geoCenter{'cooX'} += $$coordsRef[$_]{'cooX'};
+        $geoCenter{'cooY'} += $$coordsRef[$_]{'cooY'};
+    }
+    $geoCenter{'cooX'} /= scalar(@$atomIdsRef);
+    $geoCenter{'cooY'} /= scalar(@$atomIdsRef);
+    return %geoCenter;
+}
+
+
+
+#sub getAtomIdList {
+#    my $atomsRef = shift;
+#    my $key      = shift;
+#    my $needle   = shift;
+#    my (@atomIdList, @restAtomIdList);
+#
+#    for (my $i=1; $i<@{$atomsRef}; $i++) {
+#        $$atomsRef[$i]{$key} =~ /$needle/ ? push(@atomIdList, $i) : push(@restAtomIdList, $i);
+#    }
+#    return (\@atomIdList);
+##    return (\@atomIdList, \@restAtomIdList);
+#}
+
+
+
+sub updateDelResnames {
+    my $delResnamesRef  = shift;
+    my $delAtomsDataRef = shift;
+    my %tmpResid;
+
+    for (my $i=0; $i<@{$delAtomsDataRef}; $i++) {
+        next unless $$delAtomsDataRef[$i];
+        next if $tmpResid{$$delAtomsDataRef[$i]{'uResId'}};
+        $tmpResid{$$delAtomsDataRef[$i]{'uResId'}} = 1;
+        $$delResnamesRef{$$delAtomsDataRef[$i]{'resName'}}++;
+    }
+}
+
+
+
+sub renumAtoms {
+    my $coordsRef = shift;
+    my @newCoords;
+    my $newAtomId = 1;
+    my @renumMatrix;
+
+    for (my $oldAtomId=0; $oldAtomId<@{$coordsRef}; $oldAtomId++) {
+        next unless $$coordsRef[$oldAtomId]{'uResId'};
+        $renumMatrix[$oldAtomId] = $newAtomId;
+        $newCoords[$newAtomId++] = $$coordsRef[$oldAtomId];
+    }
+    return (\@newCoords, @renumMatrix);
+}
+
+
+
+#sub resname2moltype {
+#    my $itpIncludeRef = shift;
+#    my $resname       = shift;
+#    my $topPath       = shift;
+#    my $molType;
+#
+#    for (my $i=0; $i<@{$itpIncludeRef}; $i++) {
+#        my $itpFile = -e ($topPath . $$itpIncludeRef[$i]) ? $topPath . $$itpIncludeRef[$i] : ($GMXLIB . "/" . $$itpIncludeRef[$i]);
+#        print "Checking ITP file \"$itpFile\" for residue name $resname\n";
+#        $molType = ITPFiles::resname2moltype($itpFile, $resname);
+#        print "  Found residue name $resname in ITP file \"$itpFile\": moleculetype = \"$molType\"\n" if $molType;
+#        return $molType if $molType;
+#    }
+#}
+
+
+
+sub round {
+    my ( $num, $prec ) = @_;
+    return int( $num / $prec + 0.5 - ( $num < 0 ) ) * $prec;
+}
+
+
+
+sub getMax {
+    return $_[0] if $_[0] > $_[1];
+    return $_[1];
+}
+
+
+
+sub getMin {
+    return $_[0] if $_[0] < $_[1];
+    return $_[1];
+}
+################################################################################
+
+
+
+################################################################################
+### Lipid routines #############################################################
+################################################################################
+package Lipid;
+
+sub analyzeBilayer {
+    my $atomIdsRef   = shift;
+    my $coordsRef    = shift;
+    my $refAtomName  = shift;
+    my @headAtomIds;
+    my %lipidData    = ('zCenter' => 0);
+
+    foreach (@{$atomIdsRef}) {
+        next unless $$coordsRef[$_]{'atomName'};
+        $lipidData{'zMin'} = $$coordsRef[$_]{'cooZ'} unless $lipidData{'zMin'};
+        $lipidData{'zMax'} = $$coordsRef[$_]{'cooZ'} unless $lipidData{'zMax'};
+        $lipidData{'zMin'} = $$coordsRef[$_]{'cooZ'} if $$coordsRef[$_]{'cooZ'} < $lipidData{'zMin'};
+        $lipidData{'zMax'} = $$coordsRef[$_]{'cooZ'} if $$coordsRef[$_]{'cooZ'} > $lipidData{'zMax'};
+        next unless $$coordsRef[$_]{'atomName'} =~ /$refAtomName/;
+        $lipidData{'zCenter'} += $$coordsRef[$_]{'cooZ'};
+        push(@headAtomIds, $_);
+    }
+    $lipidData{'zCenter'} /= scalar(@headAtomIds) if @headAtomIds;
+
+    $lipidData{'leaflets'} = detectLeaflets(\@headAtomIds, $coordsRef, $lipidData{'zCenter'});
+
+    return %lipidData;
+}
+
+
+
+sub detectLeaflets {
+    my $headAtomIdsRef = shift;
+    my $coordsRef      = shift;
+    my $bilayerCenterZ = shift;
+    my %leafletData;
+    $leafletData{'upper'}{'nLipids'} = 0;
+    $leafletData{'lower'}{'nLipids'} = 0;
+
+    foreach (@{$headAtomIdsRef}) {
+        if ($$coordsRef[$_]{'cooZ'} > $bilayerCenterZ) {
+            $leafletData{'upper'}{'uResIds'}[ $$coordsRef[$_]{'uResId'} ] = 1;
+            $leafletData{'upper'}{'headCooZAvg'} += $$coordsRef[$_]{'cooZ'};
+            $leafletData{'upper'}{'nLipids'}++;
+        }
+        else {
+            $leafletData{'lower'}{'uResIds'}[ $$coordsRef[$_]{'uResId'} ] = 1;
+            $leafletData{'lower'}{'headCooZAvg'} += $$coordsRef[$_]{'cooZ'};
+            $leafletData{'lower'}{'nLipids'}++;
+        }
+    }
+    $leafletData{'upper'}{'headCooZAvg'} /= $leafletData{'upper'}{'nLipids'} if $leafletData{'upper'}{'nLipids'};
+    $leafletData{'lower'}{'headCooZAvg'} /= $leafletData{'lower'}{'nLipids'} if $leafletData{'lower'}{'nLipids'};
+
+    return (\%leafletData);
+}
+################################################################################
+
+
+
+################################################################################
+### Protein routines ###########################################################
+################################################################################
+#package Protein;
+#
+#sub analyzeProtein {
+#    my $ndxDataRef      = shift;
+#    my $protGroupId     = shift;
+#    my $suGroupIdsRef   = shift;
+#    my $coordsRef       = shift;
+#    my $boxRef          = shift;
+#    my $gridDelta       = shift;
+#    my $zMin            = shift;
+#    my $zMax            = shift;
+#    my $extCavDetection = shift;
+#    my $xyProfile       = shift;
+#
+#    my $gridRef;
+#    my $gridsizeX = 0;
+#    my $gridsizeY = 0;
+#
+#    my $gridAreaProtein;
+#    my $gridAreaCavity;
+#
+#
+#    ### Initialize grid ########################################################
+#    ($gridRef, $gridsizeX, $gridsizeY) = iniGrid($boxRef, $gridDelta);
+#    ############################################################################
+#
+#
+#    ### Create protein grid ####################################################
+#    $gridAreaProtein = protein2Grid($gridRef, $gridsizeX, $gridsizeY, $gridDelta, $$ndxDataRef[$protGroupId]{'atoms'}, $coordsRef, $zMin, $zMax);
+#    ############################################################################
+#
+#
+#    ### Connect subdomains to form a cavity ####################################
+#    connectSubunits($gridRef, $gridsizeX, $gridsizeY, $gridDelta, $ndxDataRef, $suGroupIdsRef, $coordsRef, $zMin, $zMax) if $suGroupIdsRef;
+#    ############################################################################
+#
+#
+#    ### Detect the cavity ######################################################
+#    $gridAreaCavity = detectCavity($gridRef, $gridsizeX, $gridsizeY, $gridDelta, , $extCavDetection);
+#    ############################################################################
+#
+#
+#    ### Write out the XY profile ###############################################
+#    writeXyProfile ($xyProfile, $gridRef, $gridsizeX, $gridsizeY, $gridDelta) if $xyProfile;
+#    ############################################################################
+#
+#    return ($gridAreaProtein, $gridAreaCavity, $gridRef);
+#}
+#
+#
+#
+#sub iniGrid {
+#    my $boxRef    = shift;
+#    my $gridDelta = shift;
+#
+#    my @grid;
+#    my $gridsizeX = int($$boxRef{'cooX'} / $gridDelta) + 1;
+#    my $gridsizeY = int($$boxRef{'cooY'} / $gridDelta) + 1;
+#
+#    printf("      Create a %dx%d XY grid: 0%%\r", $gridsizeX, $gridsizeY) if $main::verbose;
+#    for (my $x=0; $x<=$gridsizeX; $x++) {
+#        printf("      Create a %dx%d XY grid: %d%%\r", $gridsizeX, $gridsizeY, 100*$x/$gridsizeX) if $main::verbose;
+#        for (my $y=0; $y<=$gridsizeY; $y++) {
+#            $grid[$x][$y] = 0;
+#        }
+#    }
+#    printf("      Create a %dx%d XY grid: 100%%\n", $gridsizeX, $gridsizeY) if $main::verbose;
+#    ############################################################################
+#
+#    return (\@grid, $gridsizeX, $gridsizeY);
+#}
+#
+#
+#
+#sub protein2Grid {
+#    my $gridRef     = shift;
+#    my $gridsizeX   = shift;
+#    my $gridsizeY   = shift;
+#    my $gridDelta   = shift;
+#    my $atomsIdsRef = shift;
+#    my $coordsRef   = shift;
+#    my $zMin        = shift;
+#    my $zMax        = shift;
+#
+#    my $nAreas      = 0;
+#    my $gridDelta2  = $gridDelta*$gridDelta;
+#
+#    print "      Mapping atoms to the grid: 0.000%\r" if $main::verbose;
+#    foreach (@{$atomsIdsRef}) {
+#        next unless $$coordsRef[$_]{'cooZ'};
+#        next if $$coordsRef[$_]{'cooZ'} > $zMax;
+#        next if $$coordsRef[$_]{'cooZ'} < $zMin;
+#        printf("      Mapping atoms to the grid: %d%% (protein area %.4f nm^2)\r", (++$$coordsRef[$_]{'atomNum'})/scalar(@{$atomsIdsRef})*100, $nAreas*$gridDelta*$gridDelta) if $main::verbose;
+#
+#        my $element = substr($$coordsRef[$_]{'atomName'}, 0, 1);
+#        my $radius  = PTE::getRadius($element);
+#        my $radius2 = $radius * $radius;
+#
+#        my $tmpGridX = int($$coordsRef[$_]{'cooX'} / $gridDelta);
+#        my $tmpGridY = int($$coordsRef[$_]{'cooY'} / $gridDelta);
+#        my $subrange = int($radius / $gridDelta);
+#
+#        for (my $x=getMax($tmpGridX-$subrange, 0); $x<=getMin($tmpGridX+$subrange, $gridsizeX-1); $x++) {
+#            for (my $y=getMax($tmpGridY-$subrange, 0); $y<=getMin($tmpGridY+$subrange, $gridsizeY-1); $y++) {
+#                my $dx = $$coordsRef[$_]{'cooX'} - $x * $gridDelta;
+#                my $dy = $$coordsRef[$_]{'cooY'} - $y * $gridDelta;
+#                my $dist2 = $dx*$dx + $dy*$dy;
+#                next if $dist2 > $radius2;
+#                ++$nAreas unless $$gridRef[$x][$y];
+#                $$gridRef[$x][$y] = 1;
+#            }
+#        }
+#    }
+#    printf("      Mapping atoms to the grid: 100%% (protein area %.4f nm^2)\n", $nAreas*$gridDelta2) if $main::verbose;
+#
+#    return ($nAreas*$gridDelta2);
+#}
+#
+#
+#
+#sub connectSubunits {
+#    my $gridRef       = shift;
+#    my $gridsizeX     = shift;
+#    my $gridsizeY     = shift;
+#    my $gridDelta     = shift;
+#    my $ndxDataRef    = shift;
+#    my $suGroupIdsRef = shift;
+#    my $coordsRef     = shift;
+#    my $zMin          = shift;
+#    my $zMax          = shift;
+#
+#    my @gridSuGeoCenter;
+#
+#
+#    print "      Detecting subunit connections: 0.0000 nm^2 possible\r" if $main::verbose;
+#
+#    ### Calculate center of mass of each protein subunit on the grid ###########
+#    foreach my $suGroupId (@{$suGroupIdsRef}) {
+#        my %tmpSum = ('cooX' => 0, 'cooY' => 0);
+#        my $nAtoms = 0;
+#        foreach (@{$ndxData[$suGroupId]{'atoms'}}) {
+#            next unless $$coordsRef[$_]{'cooZ'};
+#            next if $$coordsRef[$_]{'cooZ'} > $zMax;
+#            next if $$coordsRef[$_]{'cooZ'} < $zMin;
+#            $tmpSum{'cooX'} += $$coordsRef[$_]{'cooX'};
+#            $tmpSum{'cooY'} += $$coordsRef[$_]{'cooY'};
+#            $nAtoms++;
+#        }
+#        next unless $nAtoms;
+#        $tmpSum{'cooX'} = int(($tmpSum{'cooX'}/$nAtoms)/$gridDelta);
+#        $tmpSum{'cooY'} = int(($tmpSum{'cooY'}/$nAtoms)/$gridDelta);
+#        push(@gridSuGeoCenter, \%tmpSum);
+#    }
+#    ############################################################################
+#
+#
+#    ### Print the geometrical center of each subunit ###########################
+#    for (my $i=0; $i<@gridSuGeoCenter; $i++) {
+#        getGridSlope($gridRef, $gridSuGeoCenter[$i-1], $gridSuGeoCenter[$i]);
+#    }
+#    ############################################################################
+#}
+#
+#
+#
+## This does not work for all cases. Replace this routine by a vector based method.
+#sub getGridSlope {
+#    my $gridRef   = shift;
+#    my $vecARef   = shift;
+#    my $vecBRef   = shift;
+#
+#    my $slope = ($$vecARef{'cooY'} - $$vecBRef{'cooY'}) / ($$vecARef{'cooX'} - $$vecBRef{'cooX'});
+#    my $xMin;
+#    my $xMax;
+#    my $yMin;
+#
+#    if ($$vecARef{'cooX'} < $$vecBRef{'cooX'}) {
+#        $xMin = $$vecARef{'cooX'};
+#        $yMin = $$vecARef{'cooY'};
+#
+#        $xMax = $$vecBRef{'cooX'};
+#    }
+#    else {
+#        $xMin = $$vecBRef{'cooX'};
+#        $yMin = $$vecBRef{'cooY'};
+#
+#        $xMax = $$vecARef{'cooX'};
+#    }
+#
+#    if ($slope > 3) {
+#        $xMin = $$vecARef{'cooY'};
+#        $yMin = $$vecARef{'cooX'};
+#
+#        $xMax = $$vecBRef{'cooY'};
+#    }
+#
+#    #if ($$vecARef{'cooX'} > $$vecBRef{'cooX'}) {
+#    #    $xMax = $$vecARef{'cooX'};
+#    #}
+#    #else {
+#    #    $xMax = $$vecBRef{'cooX'};
+#    #}
+#
+#    for (my $x=$xMin; $x<=$xMax; $x++) {
+#        $yMin += $slope;
+#        my $intY = main::round($yMin, 1);
+#        next if $$gridRef[$x][$intY];
+#        $$gridRef[$x][$intY] = 3;
+#
+#        $$gridRef[$x+1][$intY] = 3;
+#        $$gridRef[$x-1][$intY] = 3;
+#        $$gridRef[$x][$intY+1] = 3;
+#        $$gridRef[$x][$intY-1] = 3;
+#        $$gridRef[$x+1][$intY+1] = 3;
+#        $$gridRef[$x+1][$intY-1] = 3;
+#        $$gridRef[$x-1][$intY+1] = 3;
+#        $$gridRef[$x-1][$intY-1] = 3;
+#    }
+#}
+#
+#
+#
+#sub detectCavity {
+#    my $gridRef         = shift;
+#    my $gridsizeX       = shift;
+#    my $gridsizeY       = shift;
+#    my $gridDelta       = shift;
+#    my $extCavDetection = shift;
+#
+#    my $nCavityAreas  = 0;
+#    my $gridDelta2    = $gridDelta*$gridDelta;
+#
+#
+#    print "      Detecting protein internal cavities: 0.0000 nm^2 possible\r" if $main::verbose;
+#    ### Invert protein grid (set all empty grid points to 2 (poss. cav.)) ######
+#    for (my $x=0; $x<=$gridsizeX; $x++) {
+#        for (my $y=0; $y<=$gridsizeY; $y++) {
+#            next if $$gridRef[$x][$y]; # Next loop if this grid point is defined as protein.
+#            $$gridRef[$x][$y] = 2;
+#            $nCavityAreas++;
+#        }
+#        printf("      Detecting protein internal cavities: %.4f nm^2 possible      \r", $nCavityAreas*$gridDelta2) if $main::verbose;
+#    }
+#    ############################################################################
+#
+#
+#    ### Washing out the cavities ###############################################
+#    for (my $i=0; $i<2; $i++) {
+#        my $foundExcl1 = 1;
+#        my $foundExcl2 = 1;
+#        for (my $x=0; $x<=$gridsizeX; $x++) {
+#            my $neighbCellX = $x - 1;
+#            $nCavityAreas -= $foundExcl1 = washingOutY($x, $neighbCellX, $gridsizeY, $gridRef, $extCavDetection);
+#            printf("      Detecting protein internal cavities: %.4f nm^2 possible      \r", $nCavityAreas*$gridDelta2) if $main::verbose;
+#        }
+#
+#        for (my $x=$gridsizeX; $x>=0; $x--) {
+#            my $neighbCellX = $x + 1;
+#            $nCavityAreas -= $foundExcl2 = washingOutY($x, $neighbCellX, $gridsizeY, $gridRef, $extCavDetection);
+#            printf("      Detecting protein internal cavities: %.4f nm^2 possible      \r", $nCavityAreas*$gridDelta2) if $main::verbose;
+#        }
+#        $i = 0 if $foundExcl1 || $foundExcl2;
+#    }
+#    ############################################################################
+#    printf("      Detecting protein internal cavities: %.4f nm^2 detected      \n", $nCavityAreas*$gridDelta2) if $main::verbose;
+#
+#    return ($nCavityAreas*$gridDelta2);
+#}
+#
+#
+#
+#sub washingOutY {
+#    my $x               = shift;
+#    my $neighbCellX     = shift;
+#    my $gridsizeY       = shift;
+#    my $gridRef         = shift;
+#    my $extCavDetection = shift;
+#
+#    my $delAreas        = 0;
+#
+#    for (my $y=0; $y<=$gridsizeY; $y++) { # SW -> NE.
+#        my $neighbCellY = $y - 1;
+#        next unless $$gridRef[$x][$y] == 2; # Next if this grid point is not a possible cavity.
+#        unless ($$gridRef[$x][$neighbCellY]) { # If the neighbored cell is not protein or not a possible cavity...
+#            $$gridRef[$x][$y] = 0; # ...exclude this from a possible cavity.
+#            $delAreas++;
+#            next;
+#        }
+#        unless ($$gridRef[$neighbCellX][$y]) {
+#            $$gridRef[$x][$y] = 0;
+#            $delAreas++;
+#            next;
+#        }
+#
+#        next unless $extCavDetection;
+#        unless ($$gridRef[$neighbCellX][$neighbCellY]) {
+#            $$gridRef[$x][$y] = 0;
+#            $delAreas++;
+#        }
+#    }
+#
+#    for (my $y=$gridsizeY; $y>=0; $y--) { # NW -> SE.
+#        my $neighbCellY = $y + 1;
+#        next unless $$gridRef[$x][$y] == 2;
+#        unless ($$gridRef[$x][$neighbCellY]) {
+#            $$gridRef[$x][$y] = 0;
+#            $delAreas++;
+#            next;
+#        }
+#        unless ($$gridRef[$neighbCellX][$y]) {
+#            $$gridRef[$x][$y] = 0;
+#            $delAreas++;
+#            next;
+#        }
+#
+#        next unless $extCavDetection;
+#        unless ($$gridRef[$neighbCellX][$neighbCellY]) {
+#            $$gridRef[$x][$y] = 0;
+#            $delAreas++;
+#        }
+#    }
+#
+#    return $delAreas;
+#}
+#
+#
+#
+#sub writeXyProfile {
+#    my $xyProfile = shift;
+#    my $gridRef   = shift;
+#    my $gridsizeX = shift;
+#    my $gridsizeY = shift;
+#    my $gridDelta = shift;
+#
+#    printf("      Writing out protein xy grid profile: 0%%\r") if $main::verbose;
+#    open(XYPROFILE, ">$xyProfile") || die "ERROR: Cannot open profile output file \"$xyProfile\": $!\n";
+#    for (my $x=0; $x<=$gridsizeX; $x++) {
+#        my $tmpX = $x*$gridDelta; # Performance.
+#        for (my $y=0; $y<=$gridsizeY; $y++) {
+#            printf(XYPROFILE "%f %f %d\n", $tmpX, $y*$gridDelta, $$gridRef[$x][$y]) if $$gridRef[$x][$y];
+#        }
+#        printf("      Writing out protein xy grid profile: %d%%\r", 100*$x/$gridsizeX) if $main::verbose;
+#    }
+#    close XYPROFILE;
+#    printf("      Writing out protein xy grid profile: 100%%\n") if $main::verbose;
+#}
+#
+#
+#
+#sub getMax {
+#    return $_[0] if $_[0] > $_[1];
+#    return $_[1];
+#}
+#
+#
+#
+#sub getMin {
+#    return $_[0] if $_[0] < $_[1];
+#    return $_[1];
+#}
+################################################################################
+
+
+
+################################################################################
+### Periodic Table of the Elements routines ####################################
+################################################################################
+#package PTE;
+#
+#sub getRadius {
+#    my %atomRadius = ('H'  => 0.110,
+#                      'He' => 0.140,
+#                      'Li' => 0.182,
+#                      'Be' => 0.153,
+#                      'B'  => 0.192,
+#                      'C'  => 0.170,
+#                      'N'  => 0.155,
+#                      'O'  => 0.152,
+#                      'F'  => 0.147,
+#                      'Ne' => 0.154,
+#                      'Na' => 0.227,
+#                      'Mg' => 0.173,
+#                      'Al' => 0.184,
+#                      'Si' => 0.210,
+#                      'P'  => 0.180,
+#                      'S'  => 0.180,
+#                      'Cl' => 0.175,
+#                      'Ar' => 0.188,
+#                      'K'  => 0.275,
+#                      'Ca' => 0.231,
+#                      'Ni' => 0.163,
+#                      'Cu' => 0.140,
+#                      'Zn' => 0.139,
+#                      'Ga' => 0.187,
+#                      'Ge' => 0.211,
+#                      'As' => 0.185,
+#                      'Se' => 0.190,
+#                      'Br' => 0.185,
+#                      'Kr' => 0.202,
+#                      'Rb' => 0.303,
+#                      'Sr' => 0.249,
+#                      'Pd' => 0.163,
+#                      'Ag' => 0.172,
+#                      'Cd' => 0.158,
+#                      'In' => 0.193,
+#                      'Sn' => 0.217,
+#                      'Sb' => 0.206,
+#                      'Te' => 0.206,
+#                      'I'  => 0.198,
+#                      'Xe' => 0.216,
+#                      'Cs' => 0.343,
+#                      'Ba' => 0.268,
+#                      'Pt' => 0.175,
+#                      'Au' => 0.166,
+#                      'Hg' => 0.155,
+#                      'Tl' => 0.196,
+#                      'Pb' => 0.202,
+#                      'Bi' => 0.207,
+#                      'Po' => 0.197,
+#                      'At' => 0.202,
+#                      'Rn' => 0.220,
+#                      'Fr' => 0.348,
+#                      'Ra' => 0.283,
+#                      'U'  => 0.186);
+#
+#    return $atomRadius{$_[0]} if $atomRadius{$_[0]};
+#    return 0;
+#
+## Atomic van der Waals radii in nm.
+##    1) R. Scott Rowland, Robin Taylor: Intermolecular Nonbonded Contact
+##       Distances in Organic Crystal Structures: Comparison with Distances
+##       Expected from van der Waals Radii. In: J. Phys. Chem. 1996, 100,
+##       S. 7384–7391, doi:10.1021/jp953141+.
+##    2) A. Bondi: van der Waals Volumes and Radii. In: J. Phys. Chem. 1964, 68,
+##       S. 441-451, doi:10.1021/j100785a001.
+##    3) Manjeera Mantina, Adam C. Chamberlin, Rosendo Valero, Christopher J.
+##       Cramer, Donald G. Truhlar: Consistent van der Waals Radii for the Whole
+##       Main Group. In: J. Phys. Chem. A. 2009, 113, S. 5806–5812,
+##       doi:10.1021/jp8111556.
+#}
+################################################################################
+
+
+
+
+################################################################################
+### PDBFiles  ##################################################################
+################################################################################
+package PDBFiles;
+
+sub readPdb {
+    my $pdbFile = shift;
+    my %pdbData;
+
+    print "  ---------------------------------\n  Read PDB file \"$pdbFile\"...\r";
+    open(PDBFILE, "<$pdbFile") || die "ERROR: Cannot open PDB file \"$pdbFile\": $!\n";
+    readCoords(\*PDBFILE, \%pdbData);
+    close(PDBFILE);
+    print "  Read PDB file \"$pdbFile\": Finished\n  ---------------------------------\n\n";
+
+    return %pdbData;
+}
+
+
+
+sub readCoords {
+    my $fileHandle = shift;
+    my $pdbDataRef = shift;
+    my $atomId     = 0;
+    my $uResId     = 0; # The unique residue ID.
+
+    while (<$fileHandle>) {
+        chomp($_);
+        $$pdbDataRef{'atoms'}[++$atomId] = getAtomdata($_) if ($_ =~ /^ATOM\s+/);
+        $$pdbDataRef{'atoms'}[$atomId]{'uResId'} = $uResId++ unless ($_ =~ /^ATOM\s+/);
+        print "    Read atom data:  $atomId\r" if $main::verbose;
+    }
+    return 1;
+}
+
+
+
+sub getAtomdata {
+    my $atomStr = shift;
+    my $strLen  = length($atomStr);
+    my %atomData;
+
+    $atomData{'atomNum'}    = checkSubstr($atomStr, $strLen, 6, 5);
+    $atomData{'atomName'}   = checkSubstr($atomStr, $strLen, 12, 4);
+    $atomData{'altLoc'}     = checkSubstr($atomStr, $strLen, 16, 1);
+    $atomData{'resName'}    = checkSubstr($atomStr, $strLen, 17, 3);
+    $atomData{'chainID'}    = checkSubstr($atomStr, $strLen, 21, 1);
+    $atomData{'resId'}      = checkSubstr($atomStr, $strLen, 22, 4);
+    $atomData{'iCode'}      = checkSubstr($atomStr, $strLen, 26, 1);
+    $atomData{'cooX'}       = checkSubstr($atomStr, $strLen, 30, 8);
+    $atomData{'cooY'}       = checkSubstr($atomStr, $strLen, 38, 8);
+    $atomData{'cooZ'}       = checkSubstr($atomStr, $strLen, 46, 8);
+    $atomData{'occupancy'}  = checkSubstr($atomStr, $strLen, 54, 6);
+    $atomData{'tempFactor'} = checkSubstr($atomStr, $strLen, 60, 6);
+    $atomData{'element'}    = checkSubstr($atomStr, $strLen, 76, 2);
+    $atomData{'charge'}     = checkSubstr($atomStr, $strLen, 78, 2);
+
+    return \%atomData;
+}
+
+
+
+sub checkSubstr {
+    my $str       = shift;
+    my $strLen    = shift;
+    my $start     = shift;
+    my $substrLen = shift;
+    my $substr    = '';
+
+    if ($strLen >= ($start+$substrLen)) {
+        $substr = substr($str, $start, $substrLen);
+        $substr =~ s/\s//g;
+    }
+    return $substr;
+}
+
+
+
+sub writePdb {
+    my $pdbFile    = shift;
+    my $pdbDataRef = shift;
+
+    $pdbFile .= ".pdb" unless $pdbFile =~ /\.pdb$/;
+
+    open(PDBFILE, ">$pdbFile") || die "ERROR: Cannot open output PDB file ($pdbFile): $!\n";
+    writeCoords(\*PDBFILE, $pdbDataRef);
+    close(PDBFILE);
+}
+
+
+
+sub writeCoords {
+    my $fileHandle = shift;
+    my $pdbDataRef = shift;
+
+    my $atomId     = 1;
+
+    my %defaultAtom = ("atomNum"    => 0,
+                       "atomName"   => "X",
+                       "altLoc"     => "",
+                       "resName"    => "RES",
+                       "chainId"    => 0,
+                       "resId"      => 0,
+                       "iCode"      => "",
+                       "cooX"       => 0.0,
+                       "cooY"       => 0.0,
+                       "cooZ"       => 0.0,
+                       "occupancy"  => 0.0,
+                       "tempFactor" => 0.0,
+                       "element"    => "X",
+                       "charge"     => "0");
+
+    foreach (@{$$pdbDataRef{'atoms'}}) {
+        next unless $$_{'uResId'};
+
+        ### Fill empty fields with standard parameters #########################
+        foreach my $key (keys %defaultAtom) {
+            $$_{$key} = $defaultAtom{$key} unless defined($$_{$key});
+        }
+        ########################################################################
+        $$_{'element'} = substr($$_{'atomName'}, 0, 1) if $$_{'element'} eq 'X';
+
+        printf($fileHandle "ATOM  %5d %4s%1s%4s%1s%4d%1s   %8.3f%8.3f%8.3f%6.2f%6s          %2s%2s\n",
+            (($atomId++)%100000), $$_{'atomName'}, $$_{'altLoc'}, $$_{'resName'}, $$_{'chainId'}, ($$_{'resId'}%100000),  $$_{'iCode'}, ($$_{'cooX'}*10), ($$_{'cooY'}*10), ($$_{'cooZ'}*10), $$_{'occupancy'}, substr(sprintf("%6.2f", $$_{'tempFactor'}), 0, 6), $$_{'element'}, $$_{'charge'});
+    }
+}
+################################################################################
+
+
+
+################################################################################
+### TOPFiles  ##################################################################
+################################################################################
+package TOPFiles;
+
+sub readTop {
+    my $topFile = shift;
+    my %topData;
+
+    print "  ---------------------------------\n  Read TOP file \"$topFile\"...\r";
+    open(TOPFILE, "<$topFile") || die "ERROR: Cannot open TOP file \"$topFile\": $!\n";
+    readData(\*TOPFILE, \%topData);
+    close(TOPFILE);
+    print "  Read TOP file \"$topFile\": Finished\n  ---------------------------------\n\n";
+
+    return %topData;
+}
+
+
+
+sub readData {
+    my $fileHandle = shift;
+    my $topDataRef = shift;
+    my $molSwitch  = 0;
+
+    while (<$fileHandle>) {
+        chomp($_);
+        push(@{$$topDataRef{'include'}}, $1) if $_ =~ /^\s*#include\s+"(.+)"/;
+        $molSwitch = 0 if $molSwitch && $_ =~ /^\s*\[.+\]"/;
+        $$topDataRef{'molecules'}{$1} = $2 if $molSwitch && $_ =~ /^\s*(\w+)\s+(\d+)/;
+        $molSwitch = 1 if $_ =~ /^\s*\[ molecules \]/;
+    }
+    printf("\n    Read files for inclusion: %d\n", scalar @{$$topDataRef{'include'}}) if $main::verbose;
+    printf("    Number of molecule types: %d\n", scalar keys %{$$topDataRef{'molecules'}}) if $main::verbose;
+}
+
+
+
+sub updateTop {
+    my $topFile = shift;
+    my $molType = shift;
+    my $molNum  = shift;
+
+    my $backupFile = main::fileBackup($topFile);
+    open(BUTOPFILE, "<$backupFile") || die "ERROR: Cannot open TOP file \"$topFile\": $!\n";
+    open(TOPFILE, ">$topFile") || die "ERROR: Cannot open TOP file \"$topFile\": $!\n";
+    while (<BUTOPFILE>) {
+        $_ = sprintf("%-14s %6d\n", $molType, $molNum) if $_ =~ /^\s*$molType/;
+        print TOPFILE $_;
+    }
+    close(TOPFILE);
+    close(BUTOPFILE);
+}
+################################################################################
+
+
+###############################################################################
+### APLFiles  (APL = area per lipid) ##########################################
+###############################################################################
+package APLFiles;
+
+sub writeApl {
+    my $aplFile    = shift;
+    my $aplDataRef = shift;
+
+    my $isNewFile = (-e $aplFile) ? 0 : 1;
+    open(APLFILE, ">>$aplFile") || die "ERROR: Cannot open area per lipid output file \"$aplFile\": $!\n";
+    print APLFILE "# Group-ID | Group-Name | Area/lipid (upper leaflet) | Area/lipid (lower leaflet) | Apl(average [both leaflets])\n" if $isNewFile;
+    printf APLFILE ("%10d | %10s", $$aplDataRef{'groupId'}, $$aplDataRef{'groupName'});
+    printf APLFILE (" | %f", $$aplDataRef{'upper'}) if $$aplDataRef{'upper'};
+    printf APLFILE (" | %f", $$aplDataRef{'lower'}) if $$aplDataRef{'lower'};
+    printf APLFILE (" | %f", $$aplDataRef{'average'}) if $$aplDataRef{'average'};
+    print APLFILE "\n";
+    close(APLFILE);
+}
+################################################################################
