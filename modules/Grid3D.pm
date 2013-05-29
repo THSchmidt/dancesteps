@@ -20,7 +20,7 @@ package Grid3D;
 
 use strict;
 use warnings;
-use PTE qw(getElementData);
+use PTE qw(atomName2Element getElementData);
 
 use base 'Exporter';
 
@@ -147,9 +147,10 @@ sub atoms2Grid {
         next unless $$coordDataRef{'atoms'}[$_]{'cooZ'};
 
         ### Get the van der Waals radius of the atom ###########################
-        my $element = substr($$coordDataRef{'atoms'}[$_]{'atomName'}, 0, 1);
+#        my $element = substr($$coordDataRef{'atoms'}[$_]{'atomName'}, 0, 1);
+        my $element = atomName2Element($$coordDataRef{'atoms'}[$_]{'atomName'});
 #        my $element = $$coordDataRef[$_]{'atomName'};
-        my $radius  = getElementData($element, 'vdwRadius');
+        my $radius  = getElementData($element, 'vdwRadius')*1.4;
         my $radius2 = $radius * $radius;
         ########################################################################
 

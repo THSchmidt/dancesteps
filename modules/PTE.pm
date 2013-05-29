@@ -26,6 +26,7 @@ use base 'Exporter';
 our $VERSION = '1.0';
 
 our @EXPORT_OK = qw(addElement
+                    atomName2Element
                     getElementData
                     isElement
                     printPte);
@@ -137,9 +138,9 @@ for (my $i=0; $i<@table; $i+=$nKeys) {
 
 
 
-sub isElement {
+sub isElement { # $_[0] = element name, if $_[1] = true -> turn warnings off (default: warnings on).
     unless ($elements{$_[0]}) {
-        warn "WARNING: Element \"$_[0]\" does not exist.\n";
+        warn "WARNING: Element \"$_[0]\" does not exist.\n" unless $_[1];
         return;
     }
     return 1;
@@ -154,6 +155,22 @@ sub getElementData { # $_[0] = $symbol, $_[1] = any element of @keys.
         return;
     }
     return $elements{$_[0]}{$_[1]};
+}
+
+
+
+sub atomName2Element {
+    my $atomName = shift;
+
+    return $atomName if isElement($atomName, 1);
+    $atomName =~ /([A-Za-z]{1,3})/;
+    return $1 if isElement($1, 1);
+
+    my $oneLetter = substr($1, 0, 1);
+    return $oneLetter if isElement($oneLetter, 1);
+
+    warn("WARNING: No element was found for atom name \"$atomName\".\n");
+    return;
 }
 
 

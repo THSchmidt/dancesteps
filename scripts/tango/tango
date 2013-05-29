@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-# Copyright 2012 Thomas H. Schmidt
+# Copyright 2013 Thomas H. Schmidt
 #
 # This file is part of DanceSteps.
 #
@@ -41,7 +41,7 @@ use Statistics;
 
 ### Default Parameters #########################################################
 our $version        = "rc1";              # Version number.
-our $year           = "2012";             # Year (of change).
+our $year           = "2013";             # Year (of change).
 
 our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
 
@@ -114,16 +114,16 @@ printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
 
 
 ### Read the XTC file ##########################################################
-my $xtcDataRef = FileIO::XTC::readXtc($xtcFile, \%timeRange);
-
-
-printf("\n\nFrame Step      Time     Atom cooX     cooY     cooZ\n");
-for (my $fr=0; $fr<@{$xtcDataRef}; $fr++) {
-    for (my $i=0; $i<1; $i++) {
-       printf "  %3d % 9d % 8.3f % 4d % 8.3f % 8.3f % 8.3f\n", $fr, $$xtcDataRef[$fr]{'step'}, $$xtcDataRef[$fr]{'time'}, $i + 1, $$xtcDataRef[$fr]{'atoms'}[$i]{'cooX'}, $$xtcDataRef[$fr]{'atoms'}[$i]{'cooY'}, $$xtcDataRef[$fr]{'atoms'}[$i]{'cooZ'};
-    }
-}
-exit;
+#my $xtcDataRef = FileIO::XTC::readXtc($xtcFile, \%timeRange);
+#
+#
+#printf("\n\nFrame Step      Time     Atom cooX     cooY     cooZ\n");
+#for (my $fr=0; $fr<@{$xtcDataRef}; $fr++) {
+#    for (my $i=0; $i<1; $i++) {
+#       printf "  %3d % 9d % 8.3f % 4d % 8.3f % 8.3f % 8.3f\n", $fr, $$xtcDataRef[$fr]{'step'}, $$xtcDataRef[$fr]{'time'}, $i + 1, $$xtcDataRef[$fr]{'atoms'}[$i]{'cooX'}, $$xtcDataRef[$fr]{'atoms'}[$i]{'cooY'}, $$xtcDataRef[$fr]{'atoms'}[$i]{'cooZ'};
+#    }
+#}
+#exit;
 ################################################################################
 
 

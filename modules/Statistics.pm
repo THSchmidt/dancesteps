@@ -99,7 +99,7 @@ sub variance {
     return unless $vectorRef;
     return unless scalar(@{$vectorRef});
     $mean = mean($vectorRef) unless defined $mean;
-    return 0 unless $mean;
+    return 0 unless defined $mean;
 
     for (my $i=0; $i<@{$vectorRef}; $i++) {
         next unless defined $$vectorRef[$i];
@@ -108,7 +108,7 @@ sub variance {
     }
 
     return unless $cardinality;
-    return ($tmp/($cardinality-1));
+    return ($tmp/($cardinality));
 }
 
 
