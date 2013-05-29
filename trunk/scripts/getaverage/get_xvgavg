@@ -139,7 +139,7 @@ $nCols++;
 for (my $col=0; $col<$nCols; $col++) {
     my $outFilename = sprintf("column_%d.xvg", $col);
     open(OUTFILE, ">$outFilename") || die "ERROR: Cannot open output file \"$outFilename\": $!\n";
-    print OUTFILE ("#MEAN VARIANCE STDDEV\n");
+    print OUTFILE ("#TIME MEAN VARIANCE STDDEV\n");
     for (my $line=0; $line<@meanPerLineOfCol; $line++) {
         printf OUTFILE ("%s   %s   %s   %s\n", $xvgData[0]{'values'}[$line][0], $meanPerLineOfCol[$line][$col], $variPerLineOfCol[$line][$col], $stddPerLineOfCol[$line][$col]);
     }
