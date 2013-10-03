@@ -590,7 +590,7 @@ sub writeAnswFilePdb {
     my $chainIdOrderRef = shift;
 
     open(ANSWERFILE, ">$answerFile") || die "ERROR: Cannot open file \"$answerFile\": $!\n";
-    print ANSWERFILE (4 . "\n"); # Default force field.
+    print ANSWERFILE (14 . "\n1\n"); # Default force field and SPC water.
     for (my $m=0; $m<@{$chainIdOrderRef}; $m++) {
         my $chainId = $$chainIdOrderRef[$m];
         for (my $i=0; $i<@pdb2gmxAaOrder; $i++) {
@@ -600,6 +600,7 @@ sub writeAnswFilePdb {
             }
         }
     }
+    print "\n";
     close(ANSWERFILE);
 }
 
@@ -610,13 +611,14 @@ sub writeAnswFileGro {
     my $pStatesRef = shift;
 
     open(ANSWERFILE, ">$answerFile") || die "ERROR: Cannot open file \"$answerFile\": $!\n";
-    print ANSWERFILE (4 . "\n"); # Default force field.
+    print ANSWERFILE (14 . "\n1\n"); # Default force field and SPC water.
     for (my $i=0; $i<@pdb2gmxAaOrder; $i++) {
         my $resName = $pdb2gmxAaOrder[$i];
         for (my $resId=0; $resId<@{$$pStatesRef{$resName}}; $resId++) {
             print ANSWERFILE ($$pStatesRef{$resName}[$resId] . "\n") if defined($$pStatesRef{$resName}[$resId]);
         }
     }
+    print "\n";
     close(ANSWERFILE);
 }
 ################################################################################
