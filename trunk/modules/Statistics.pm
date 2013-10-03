@@ -101,6 +101,22 @@ sub variance {
     $mean = mean($vectorRef) unless defined $mean;
     return 0 unless defined $mean;
 
+    ### Stichprobenvarianz #####################################################
+#    my $ep = 0;
+#    my $variance = 0;
+#    for (my $i=0; $i<@{$vectorRef}; $i++) {
+#        next unless defined $$vectorRef[$i];
+#        my $s     = $$vectorRef[$i] - $mean;
+#        $ep       += $s;
+#        $variance += $s*$s;
+#    }
+#    $variance = ($variance - $ep * $ep / @{$vectorRef}) / (@{$vectorRef} - 1);
+#    return $variance;
+    ### Adapted from "Numerical Recipes - Third Edition". Thanks!
+    ############################################################################
+
+
+    ### Grundgesamtheit ########################################################
     for (my $i=0; $i<@{$vectorRef}; $i++) {
         next unless defined $$vectorRef[$i];
         $tmp += ($$vectorRef[$i] - $mean)**2;
@@ -109,6 +125,7 @@ sub variance {
 
     return unless $cardinality;
     return ($tmp/($cardinality));
+    ############################################################################
 }
 
 
