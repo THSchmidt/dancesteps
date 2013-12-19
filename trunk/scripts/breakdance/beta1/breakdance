@@ -143,8 +143,16 @@ my $statGroupId = $statGroupIds[0]; # Only one group can be defined as protein.
 # Apply each translation vector to each atom of each dynamic component
 
 
-my $inflatingFactor = 1.8;
-my $deflatingFactor = 0.98;
+my $inflatingFactor = 1.9;
+my $deflatingFactor = getDeflatingFactor($inflatingFactor, $nDeflatingSteps);
+
+
+sub getDeflatingFactor {
+    my $inflatingFactor = shift;
+    my $nDeflatingSteps = shift;
+
+    return exp((log(1/$inflatingFactor))/$nDeflatingSteps);
+}
 
 inflateChainsXY(\@dynaGroupIds, \@ndxData, $coordData{'atoms'}, $inflatingFactor, $coordData{'box'});
 

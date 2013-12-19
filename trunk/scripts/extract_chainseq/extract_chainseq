@@ -7,8 +7,8 @@ my @fileNames = @ARGV;
 my $selProt = 0;
 
 if ($fileNames[0] eq '-p') {
-#    $selProt = 1;
-    pop(@fileNames);
+    $selProt = 1;
+    shift(@fileNames);
 }
 
 

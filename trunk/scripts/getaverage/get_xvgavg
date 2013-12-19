@@ -40,7 +40,13 @@ our $year           = "2013";             # Year (of change).
 our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
 
 my @xvgInFiles;                           # Input XVG files.
+my $xvgOutFile;                           # Output XVG file.
 my $outputPref      = '';                 # Prefix for output files.
+
+my $writeAvg        = 1;                  # Write out the mean.
+my $writeVar        = 1;                  # Write out the variance.
+my $writeStd        = 1;                  # Write out the standard deviation.
+my $compFirst       = 0;                  # Compute also for the first column (default: no).
 
 my $helpAndQuit     = 0;                  # Print out program help.
 ################################################################################
@@ -48,10 +54,13 @@ my $helpAndQuit     = 0;                  # Print out program help.
 
 
 ### Internal parameters ########################################################
-my %coordData;         # Filled by "GROFiles::readGro(<GROFILE>)".
-my @ndxData;           # Filled by "NDXFiles::readNdx(<NDXFILE>)".
-my @thickNdxGroupIds;  # Filled by "NDXFiles::selectGroupIds(...)".
-my @vsDistNdxGroupIds; # Filled by "NDXFiles::selectGroupIds(...)".
+my @xvgData;            # Filled by "FileIO::XVG::readXvg(<XVGFILE>)".
+
+my @valuesPerLineOfCol;
+my @meanPerLineOfCol;
+my @variPerLineOfCol;
+my @stddPerLineOfCol;
+my $nCols = 0;
 ################################################################################
 
 
@@ -63,8 +72,8 @@ printHead();
 
 
 ### Handle commandline parameters ##############################################
-#addCmdlParam('scalar', 's',       'Input',       \$coordInFile,                $coordInFile, 'Structure file: gro');
 addCmdlParam('array',  'f',       'Input, Mult.',\@xvgInFiles,                 scalar(@xvgInFiles) ? join(" ", @xvgInFiles) : '-1', 'xvgr file');
+addCmdlParam('scalar', 'o',       'Output, Opt.',\$xvgOutFile,                 $xvgOutFile, 'xvgr file');
 addCmdlParam('scalar', 'deffnm',  'string',      \$outputPref,                 $outputPref, 'Prefix of the output files');
 addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
 #addCmdlParam('scalar', 'b',       'time',        \$timeRange{'range'}{'min'},  ($timeRange{'range'}{'min'} ? $timeRange{'range'}{'min'} : 'no'), 'First frame (ps) to read from trajectory');
@@ -75,7 +84,10 @@ addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $
 #addCmdlParam('scalar', 'dy',      'real',        \$gridDeltaY,                 $gridDeltaY, 'Grid spacing along the Y axis');
 #addCmdlParam('scalar', 'dz',      'real',        \$gridDeltaZ,                 $gridDeltaZ, 'Grid spacing along the Z axis');
 #addCmdlParam('scalar', 'd',       'real',        \$alongAxis,                  $alongAxis, 'Axis for distance calculation.');
-#addCmdlParam('flag',   'pbcwrap', 'bool',        \$pbcWrap,                    $pbcWrap ? 'yes' : 'no', 'Wrap the coordinates at the edges of the box.');
+addCmdlParam('flag',   'avg',      'bool',        \$writeAvg,                   $writeAvg ? 'yes' : 'no', 'Write out the mean.');
+addCmdlParam('flag',   'var',      'bool',        \$writeVar,                   $writeVar ? 'yes' : 'no', 'Write out the variance.');
+addCmdlParam('flag',   'std',      'bool',        \$writeStd,                   $writeStd ? 'yes' : 'no', 'Write out the standard deviation.');
+addCmdlParam('flag',   'first',    'bool',        \$compFirst,                  $compFirst ? 'yes' : 'no', 'Compute also for the first column.');
 #addCmdlParam('flag',   'vsdist',  'bool',        \$vsDist,                     $vsDist ? 'yes' : 'no', 'Measure the thickness of group 1 as a function of distance to group 2 (NDX file required).');
 addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
 #addCmdlParam('scalar', 'lr',      'string',      \$groupResname,               $groupResname, 'Regex for the detection of the bilayer atoms of the membrane GRO file (obsolete if a membrane NDX file is given)');
@@ -84,18 +96,17 @@ cmdlParser();
 ################################################################################
 
 
-my @xvgData;
 
 ### Print program help if the user set the flag ################################
 printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
 ################################################################################
 
 
+
 ### Read the XVG files #########################################################
 printHelp(getCmdlParamRef(), 1) unless scalar(@xvgInFiles);
 
 my $nLines = 0;
-
 for (my $i=0; $i<@xvgInFiles; $i++) {
     my %tmpXvgData = FileIO::XVG::readXvg($xvgInFiles[$i]); # Read the XVG file.
     $xvgData[$i] = \%tmpXvgData;
@@ -107,27 +118,18 @@ for (my $i=0; $i<@xvgInFiles; $i++) {
 
 
 ### Calculate the average for columns of different files per line ##############
-my @valuesPerLineOfCol;
-my @meanPerLineOfCol;
-my @variPerLineOfCol;
-my @stddPerLineOfCol;
-my $nCols = 0;
 for (my $line=0; $line<@{$xvgData[0]{'values'}}; $line++) {
     if (ref($xvgData[0]{'values'}[$line]) eq 'ARRAY') {
-#        print "Line $line has " . scalar(@{$xvgData[0]{'values'}[$line]}) . " columns\n";
         
         for (my $i=0; $i<@xvgInFiles; $i++) {
             for (my $col=0; $col<@{$xvgData[$i]{'values'}[$line]}; $col++) {
                 push(@{$valuesPerLineOfCol[$line][$col]}, $xvgData[$i]{'values'}[$line][$col]);
-#                print $valuesPerLineOfCol[$line][$col][-1] . "  :: $line -  ";
             }
-#            print "\n";
         }
     }
 
     for (my $col=0; $col<@{$valuesPerLineOfCol[$line]}; $col++) {
         my @statistics = Statistics::all(\@{$valuesPerLineOfCol[$line][$col]});
-#        print join("   ", @{$valuesPerLineOfCol[$line][$col]}) . " :: Mean = " . $statistics[0] . "\n";
         $meanPerLineOfCol[$line][$col] = $statistics[0];
         $variPerLineOfCol[$line][$col] = $statistics[1];
         $stddPerLineOfCol[$line][$col] = $statistics[2];
@@ -135,10 +137,38 @@ for (my $line=0; $line<@{$xvgData[0]{'values'}}; $line++) {
     }
 }
 ################################################################################
-#exit;
+
+
 $nCols++;
+my @outLines;
+if ($xvgOutFile) {
+    my $headLine = "#COLUMN1";
+    $headLine   .= " MEAN" if $writeAvg;
+    $headLine   .= " VARIANCE" if $writeVar;
+    $headLine   .= " STDDEV" if $writeStd;
+    push(@outLines, $headLine . "\n");
+
+    for (my $line=0; $line<@meanPerLineOfCol; $line++) {
+        my $valLine = sprintf("%s", $xvgData[0]{'values'}[$line][0]);
+        for (my $col=($compFirst ? 0 : 1); $col<$nCols; $col++) {
+            $valLine .= sprintf("   %s", $meanPerLineOfCol[$line][$col]) if $writeAvg;
+            $valLine .= sprintf("   %s", $variPerLineOfCol[$line][$col]) if $writeVar;
+            $valLine .= sprintf("   %s", $stddPerLineOfCol[$line][$col]) if $writeStd;
+        }
+        push(@outLines, $valLine . "\n");
+    }
+
+    open(OUTFILE, ">$xvgOutFile") || die "ERROR: Cannot open output file \"$xvgOutFile\": $!\n";
+    print OUTFILE @outLines;
+    close(OUTFILE);
+    exit;
+}
+
+
+
 for (my $col=0; $col<$nCols; $col++) {
-    my $outFilename = sprintf("%s.col%d.xvg", $outputPref, $col);
+    my $outFilename = $outputPref ? sprintf("%s.col%d.xvg", $outputPref, $col) : sprintf("col%d.xvg", $col);
+
     open(OUTFILE, ">$outFilename") || die "ERROR: Cannot open output file \"$outFilename\": $!\n";
     print OUTFILE ("#TIME MEAN VARIANCE STDDEV\n");
     for (my $line=0; $line<@meanPerLineOfCol; $line++) {
