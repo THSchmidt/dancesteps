@@ -1,0 +1,226 @@
+#!/usr/bin/perl -w
+
+# Copyright 2013 Thomas H. Schmidt
+#
+# This file is part of DanceSteps.
+#
+# DanceSteps is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# any later version.
+#
+# DanceSteps is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+### Load Packages ##############################################################
+use strict;
+use IO::Handle;
+use FindBin qw($RealBin); # Absolute path to THIS script.
+use lib ($RealBin."/modules/FileIO", $RealBin."/modules");
+autoflush STDOUT 1; # For direct output.
+
+use Commandline;
+use FileIO::Pdb;
+use FileIO::Basic;
+################################################################################
+
+
+
+### Default Parameters #########################################################
+our $version        = "rc1";              # Version number.
+our $year           = "2013";             # Year (of change).
+
+our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
+
+my $coordInFile     = 'system.pdb';       # Input coordinates file.
+my $coordOutFile    = '';                 # Output coordinates file.
+
+my $colName         = 'tempFactor';       # Column name which should be set.
+my $resId           = 1;                  # Residue ID where column should be set.
+my $setVal          = '1';                # Value which should be set for each atom of the defined residue in the defined column.
+
+my $helpAndQuit     = 0;                  # Print out program help.
+################################################################################
+
+
+
+### Internal parameters ########################################################
+my %pdbColNames = ('atomNum'    => 1,
+                   'atomName'   => 1,
+                   'altLoc'     => 1,
+                   'resName'    => 1,
+                   'chainID'    => 1,
+                   'resId'      => 1,
+                   'iCode'      => 1,
+                   'cooX'       => 1,
+                   'cooY'       => 1,
+                   'cooZ'       => 1,
+                   'occupancy'  => 1,
+                   'tempFactor' => 1,
+                   'element'    => 1,
+                   'charge'     => 1); # Compatible with FileIO::Pdb.
+my %pdbData;
+################################################################################
+
+
+
+### Print out program headlines ################################################
+printHead();
+################################################################################
+
+
+### Handle commandline parameters ##############################################
+addCmdlParam('scalar', 'f',       'Input',       \$coordInFile,                $coordInFile, 'Structure file: pdb');
+addCmdlParam('scalar', 'o',       'Output',      \$coordOutFile,               $coordOutFile, 'Structure file: pdb');
+addCmdlParam('scalar', 'c',       'string',      \$colName,                    $colName, 'PDB column name to set value: ' . (join ", ", sort{$a cmp $b} keys %pdbColNames));
+addCmdlParam('scalar', 'r',       'int',         \$resId,                      $resId, 'Residue ID (not unique residue ID)');
+addCmdlParam('scalar', 's',       'string',      \$setVal,                     $setVal, 'Value which should be set');
+addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
+addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
+
+cmdlParser();
+################################################################################
+
+
+
+### Print program help if the user set the flag ################################
+printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
+################################################################################
+
+
+
+### Read the PDB file ##########################################################
+%pdbData = FileIO::PDB::readPdb($coordInFile); # Read input PDB file.
+################################################################################
+
+
+
+### Check user input ###########################################################
+die "ERROR: unknown column name \"$colName\"\n" unless ($pdbColNames{$colName});
+$resId = int($resId);
+################################################################################
+
+
+
+### Set values #################################################################
+print "  ---------------------------------\n  Searching for atoms of residue \"$resId\"...\n";
+foreach (@{$pdbData{'atoms'}}) {
+    if ($$_{'resId'} && $$_{'resId'} == $resId) {
+        printf("  Set column \"%s\" from \"%s\" to \"%s\" for atom \"%s\" (%d)\n", $colName, $$_{$colName}, $setVal, $$_{'atomName'}, $$_{'atomNum'});
+        $$_{$colName} = $setVal;
+    }
+}
+print "  Searching for atoms of residue \"$resId\": Finished\n  ---------------------------------\n\n";
+################################################################################
+
+
+
+### Backup input PDB file ######################################################
+if(!$coordOutFile || $coordInFile eq $coordOutFile) {
+    backupFile($coordInFile);
+    $coordOutFile = $coordInFile;
+}
+backupFile($coordOutFile) if (-e $coordOutFile);
+################################################################################
+
+
+
+### Read the PDB file ##########################################################
+FileIO::PDB::writePdb($coordOutFile, \%pdbData);
+################################################################################
+
+
+
+################################################################################
+### Subroutines ################################################################
+################################################################################
+sub printHead {
+    my @headLines = ("################################################################################",
+                     "",
+                     "get_avgstructure $version",
+                     "Determination of the average structure of a trajectory.",
+                     "Copyright Thomas H. Schmidt, $year",
+                     "",
+                     "http://code.google.com/p/dancesteps",
+                     "",
+                     "get_avgstructure comes with ABSOLUTELY NO WARRANTY.",
+                     "This is free software, and you are welcome to redistribute it",
+                     "under certain conditions; type `-copyright' for details.",
+                     "",
+                     "################################################################################");
+    my $maxLength = 80;
+    foreach (@headLines) {
+        $maxLength = (length $_ > $maxLength) ? length($_) : $maxLength;
+    }
+
+    foreach (@headLines) {
+        printf "%s%-${maxLength}s\n", ' ' x int(($maxLength - length($_))/2), $_;
+    }
+}
+
+
+
+sub printFoot {
+    print <<EndOfFoot;
+Please cite:
+  [1] Schmidt, T. H. DanceSteps: Dirty toolkit for Molecular Modeling (Manual)
+      http://code.google.com/p/dancesteps
+
+EndOfFoot
+}
+
+
+
+sub printHelp {
+    my $cmdLParamRef   = shift;
+    my $quitAfterPrint = shift;
+
+
+    print <<EndOfHelp;
+DESCRIPTION
+-----------
+set_pdbcolofresid [set_PdbColOfResid] reads a PDB coordinate file and sets a
+value at a defined column for all atoms of a defined residue ID.
+The output is written to a(nother) PDB file.
+
+USAGE: set_pdbcolofresid -f PDBFILE -o PDBFILE
+
+EndOfHelp
+
+    printParamHelp($cmdLParamRef);
+
+    printFoot();
+
+    exit if $quitAfterPrint;
+}
+
+
+
+sub printCopyright {
+    print <<"EndOfCopyright";
+This file is part of DanceSteps.
+
+DanceSteps is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+any later version.
+
+DanceSteps is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+EndOfCopyright
+    exit;
+}
