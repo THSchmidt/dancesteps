@@ -48,6 +48,7 @@ our $verbose        = 0;                  # Be loud and noisy (and global); defa
 my $coordInFile     = 'system.gro';       # Input coordinates file.
 my $xtcFile         = 'traj.xtc';
 my $ndxInFile       = '';                 # Input GROMACS index file.
+my $gridOutFile     = 'grid.gro';
 my $groupResname    = '^POP[ACEG]?$';       # Regex for the automatic detection of lipid molecules in the membrane GRO file.
 
 
@@ -57,10 +58,11 @@ $timeRange{'range'}{'min'}  = 0;
 $timeRange{'range'}{'max'}  = 0;
 $timeRange{'range'}{'step'} = 0;
 
-my $gridDeltaX    = 0.03;                  # Grid size in x direction [nm].
-my $gridDeltaY    = 0.03;                  # Grid size in y direction [nm].
-my $gridDeltaZ    = 0.03;                  # Grid size in z direction [nm].
+my $gridDeltaX    = 0.03;                 # Grid size in x direction [nm].
+my $gridDeltaY    = 0.03;                 # Grid size in y direction [nm].
+my $gridDeltaZ    = 0.03;                 # Grid size in z direction [nm].
 my $alongAxis     = 'z';                  # Along this axis the measurement is performed.
+my $map2Slice     = 0;                    # Map all grid points to one slice and calculate the area.
 my $pbcWrap       = 0;                    # Wrap the coordinates at the edges of the box.
 my $vsDist        = 0;                    # Measure the thickness as a function of distance to another group of atoms.
 my $radStepwidth  = 0.3;                  # Stepwidth for measuring the radial thickness (vsDist option).
@@ -86,8 +88,9 @@ printHead();
 
 ### Handle commandline parameters ##############################################
 addCmdlParam('scalar', 's',       'Input',       \$coordInFile,                $coordInFile, 'Structure file: gro');
-addCmdlParam('scalar', 'f',       'Input, Opt.', \$ndxInFile,                  $ndxInFile, 'Trajectory file: xtc');
+#addCmdlParam('scalar', 'f',       'Input, Opt.', \$xtcFile,                    $xtcFile, 'Trajectory file: xtc');
 addCmdlParam('scalar', 'n',       'Input, Opt.', \$ndxInFile,                  $ndxInFile, 'Index file');
+addCmdlParam('scalar', 'o',       'Output',      \$gridOutFile,                $gridOutFile, 'Structure file: gro');
 addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
 addCmdlParam('scalar', 'b',       'time',        \$timeRange{'range'}{'min'},  ($timeRange{'range'}{'min'} ? $timeRange{'range'}{'min'} : 'no'), 'First frame (ps) to read from trajectory');
 addCmdlParam('scalar', 'e',       'time',        \$timeRange{'range'}{'max'},  $timeRange{'range'}{'max'} ? $timeRange{'range'}{'max'} : 0, 'Last frame (ps) to read from trajectory');
@@ -97,6 +100,7 @@ addCmdlParam('scalar', 'dx',      'real',        \$gridDeltaX,                 $
 addCmdlParam('scalar', 'dy',      'real',        \$gridDeltaY,                 $gridDeltaY, 'Grid spacing along the Y axis');
 addCmdlParam('scalar', 'dz',      'real',        \$gridDeltaZ,                 $gridDeltaZ, 'Grid spacing along the Z axis');
 addCmdlParam('scalar', 'd',       'real',        \$alongAxis,                  $alongAxis, 'Axis for distance calculation.');
+addCmdlParam('flag',   'map2sl',  'real',        \$map2Slice,                  $map2Slice, 'Map all grid points to one slice and calculate the area.');
 addCmdlParam('flag',   'pbcwrap', 'bool',        \$pbcWrap,                    $pbcWrap ? 'yes' : 'no', 'Wrap the coordinates at the edges of the box.');
 addCmdlParam('flag',   'vsdist',  'bool',        \$vsDist,                     $vsDist ? 'yes' : 'no', 'Measure the thickness of group 1 as a function of distance to group 2 (NDX file required).');
 addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
@@ -147,14 +151,13 @@ elsif ($groupResname) {
     $ndxData[$thickNdxGroupIds[0]]{'groupName'} = $groupResname;
     for (my $i=1; $i<@{$coordData{'atoms'}}; $i++) {
         push(@{$ndxData[$thickNdxGroupIds[0]]{'atoms'}}, $i) if $coordData{'atoms'}[$i]{'resName'} =~ /$groupResname/;
+#        print "Found " . scalar(@{$ndxData[$thickNdxGroupIds[0]]{'atoms'}}) . " atoms of known bilayer resnames\n";
     }
 }
 else {
     printHelp();
 }
 ################################################################################
-
-#print "Found " . scalar(@{$ndxData[$thickNdxGroupIds[0]]{'atoms'}}) . " atoms of known bilayer resnames\n";
 
 
 
@@ -214,11 +217,26 @@ atoms2Grid($ndxData[$thickNdxGroupIds[0]]{'atoms'}, \%coordData, 0, $pbcWrap);
 ################################################################################
 
 
+my $completeGrid = 0; # Fill up all (also undefined) grid cells until the box limits are reached.
+
+
+### Map atoms within a range to one slice ###################################### # From squaredance.
+if ($map2Slice) {
+    my $zSliceRef = mapGrid2Slice(getGridOccRef(), "z");
+
+    my $sliceGroDataRef = slice2coordData($zSliceRef, "z", getGridZMin());
+    FileIO::GRO::writeGro($gridOutFile, $sliceGroDataRef); # Print slice-coordinates on a 3D grid.
+
+    my $sliceArea = getSliceArea($zSliceRef, $gridDeltaX, $gridDeltaY);
+    printf("Area = %8.3f nm²\n", $sliceArea);
+#    printf("Percent of the XY plane (A = %0.3f nm²) = %0.3f%%\n", $groData{'box'}{'cooX'}*$groData{'box'}{'cooY'}, ($nSliceVoxel*$gridDeltaX*$gridDeltaY*100)/($groData{'box'}{'cooX'}*$groData{'box'}{'cooY'}));
+    exit;
+}
+################################################################################
+
+
 
 ### Write the grid to a GRO file ###############################################
-#my $gridOutFile  = 'grid.gro';
-my $gridOutFile;
-my $completeGrid = 0;
 if ($gridOutFile) {
     my $gridGroDataRef = grid2CoordData(getGridOccRef(), $completeGrid);
     FileIO::GRO::writeGro($gridOutFile, $gridGroDataRef); # Print grid-coordinates.
@@ -248,10 +266,117 @@ print $statistics[1]*$gridDeltaZ*$gridDeltaZ . " = variance\n";
 print $statistics[2]*$gridDeltaZ . " = stddev\n";
 ################################################################################
 
-print "Calculate the volume of the group:\n";
 
+print "Calculate the volume of the group:\n";
 my $volume = getGridVolume(getGridOccRef());
 print "Volume = $volume nm³\n";
+
+
+
+sub mapGrid2Slice {
+    my $gridRef = shift;
+    my $vector  = shift;
+    $vector = ($vector eq "x" || $vector eq "y") ? $vector : "z";
+    my @slice;
+
+    if ($vector eq "z") {
+        for (my $z=0; $z<@$gridRef; $z++) {
+            next unless $$gridRef[$z];
+            for (my $x=0; $x<@{$$gridRef[$z]}; $x++) {
+                next unless $$gridRef[$z][$x];
+                for (my $y=0; $y<@{$$gridRef[$z][$x]}; $y++) {
+                    next unless $$gridRef[$z][$x][$y];
+                    $slice[$x][$y] = $$gridRef[$z][$x][$y];
+                }
+            }
+        }
+    }
+    elsif ($vector eq "x") {
+        for (my $z=0; $z<@$gridRef; $z++) {
+            next unless $$gridRef[$z];
+            for (my $x=0; $x<@{$$gridRef[$z]}; $x++) {
+                next unless $$gridRef[$z][$x];
+                for (my $y=0; $y<@{$$gridRef[$z][$x]}; $y++) {
+                    next unless $$gridRef[$z][$x][$y];
+                    $slice[$y][$z] = $$gridRef[$z][$x][$y];
+                }
+            }
+        }
+    }
+    elsif ($vector eq "y") {
+        for (my $z=0; $z<@$gridRef; $z++) {
+            next unless $$gridRef[$z];
+            for (my $x=0; $x<@{$$gridRef[$z]}; $x++) {
+                next unless $$gridRef[$z][$x];
+                for (my $y=0; $y<@{$$gridRef[$z][$x]}; $y++) {
+                    next unless $$gridRef[$z][$x][$y];
+                    $slice[$x][$z] = $$gridRef[$z][$x][$y];
+                }
+            }
+        }
+    }
+    return \@slice;
+}
+
+
+
+sub getSliceArea {
+    my $sliceRef   = shift;
+    my $gridDelta1 = shift;
+    my $gridDelta2 = shift;
+    my $nPixel     = 0;
+
+    for (my $x=0; $x<@{$sliceRef}; $x++) {
+        next unless $$sliceRef[$x];
+        for (my $y=0; $y<@{$$sliceRef[$x]}; $y++) {
+            next unless $$sliceRef[$x][$y];
+            $nPixel++;
+        }
+    }
+
+    return($nPixel * $gridDelta1 * $gridDelta2);
+}
+
+
+
+sub slice2coordData {
+    my $sliceRef     = shift;
+    my $vector       = shift;
+    my $sliceVal     = shift;
+    $vector = ($vector eq "x" || $vector eq "y") ? $vector : "z";
+    my @sliceOnGrid;
+    my $voxId   = 0;
+
+    if ($vector eq "z") {
+        for (my $x=0; $x<@{$sliceRef}; $x++) {
+            next unless $$sliceRef[$x];
+            for (my $y=0; $y<@{$$sliceRef[$x]}; $y++) {
+                next unless $$sliceRef[$x][$y];
+                $sliceOnGrid[$sliceVal][$x][$y] = $$sliceRef[$x][$y];
+            }
+        }
+    }
+    elsif ($vector eq "x") {
+        for (my $y=0; $y<@{$sliceRef}; $y++) {
+            next unless $$sliceRef[$y];
+            for (my $z=0; $z<@{$$sliceRef[$y]}; $z++) {
+                next unless $$sliceRef[$y][$z];
+                $sliceOnGrid[$z][$sliceVal][$y] = $$sliceRef[$y][$z];
+            }
+        }
+    }
+    elsif ($vector eq "y") {
+        for (my $x=0; $x<@{$sliceRef}; $x++) {
+            next unless $$sliceRef[$x];
+            for (my $z=0; $z<@{$$sliceRef[$x]}; $z++) {
+                next unless $$sliceRef[$x][$z];
+                $sliceOnGrid[$z][$x][$sliceVal] = $$sliceRef[$x][$z];
+            }
+        }
+    }
+
+    return grid2CoordData(\@sliceOnGrid);
+}
 
 
 
@@ -318,12 +443,10 @@ sub gridDistProfile2D2File {
 
     open(PROF2D, ">$profileOutFile") || die "ERROR: Cannot open 2D profile output file \"$profileOutFile\": $!\n";
     for (my $x=0; $x<@$profile2DRef; $x++) {
-#        print "Hallo\n";
 #        print scalar(@{$$profile2DRef[$x]}) . "\n"; exit;
         next unless $$profile2DRef[$x];
         for (my $y=0; $y<@{$$profile2DRef[$x]}; $y++) {
 #            print $$profile2DRef[$x][$y] . " :: $x $y\n";
-#            print "  Huhu\n";
             next unless $$profile2DRef[$x][$y];
             printf PROF2D ("%.3f  %.3f  %.3f\n", $x*$gridDeltaX, $y*$gridDeltaY, $$profile2DRef[$x][$y]*$gridDeltaZ);
         }
