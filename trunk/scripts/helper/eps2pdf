@@ -31,5 +31,5 @@ else {
 }
 
 system("ps2pdf -dDEVICEWIDTHPOINTS=$dDeviceWidths -dDEVICEHEIGHTPOINTS=$dDeviceHeight $epsFile $pdfFile");
-system("acroread $pdfFile");
+#system("acroread $pdfFile");
 

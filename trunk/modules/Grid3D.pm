@@ -32,6 +32,7 @@ our @EXPORT  = qw(atoms2Grid
                   getGridOccRef
                   getGridIntRef
                   getGridVdwSurfRef
+                  getGridZMin
                   grid2CoordData
                   setGridDelta);
 #our @EXPORT_OK = qw();
@@ -66,6 +67,10 @@ sub setGridDelta {
 
 
 
+sub getGridZMin { return $gridZMin; }
+
+
+
 sub getGridOccRef { return \@gridOcc; }
 
 
@@ -97,6 +102,54 @@ sub getMax {
     }
     return $max;
 }
+
+
+
+#sub getSliceArea {
+#    my $gridRef = shift;
+#    my $xSlice  = shift;
+#    my $ySlice  = shift;
+#    my $zSlice  = shift;
+#
+#    my $gridXMinAbs = getMin(@gridXMin);
+#    my $gridXMaxAbs = getMax(@gridXMax);
+#    my $gridYMinAbs = getMin(@gridYMin);
+#    my $gridYMaxAbs = getMax(@gridYMax);
+#
+#    my $nPixel = 0;
+#    my $pixelArea = $gridDeltaX * $gridDeltaY;
+#
+#    if ($zSlice) {
+#        for (my $x=$gridXMinAbs; $x<=$gridXMaxAbs; $x++) {
+#            for (my $y=$gridYMinAbs; $y<=$gridYMaxAbs; $y++) {
+#                next unless $$gridRef[$zSlice][$x][$y];
+#                $nPixel++;
+#            }
+#        }
+#    }
+#    elsif ($xSlice) {
+#        $pixelArea = $gridDeltaY * $gridDeltaZ;
+#
+#        for (my $z=$gridZMin; $z<=$gridZMax; $z++) {
+#            for (my $y=$gridYMinAbs; $y<=$gridYMaxAbs; $y++) {
+#                next unless $$gridRef[$z][$xSlice][$y];
+#                $nPixel++;
+#            }
+#        }
+#    }
+#    elsif ($ySlice) {
+#        $pixelArea = $gridDeltaX * $gridDeltaZ;
+#
+#        for (my $z=$gridZMin; $z<=$gridZMax; $z++) {
+#            for (my $x=$gridXMinAbs; $x<=$gridXMaxAbs; $x++) {
+#                next unless $$gridRef[$z][$x][$ySlice];
+#                $nPixel++;
+#            }
+#        }
+#    }
+#
+#    return($nPixel * $pixelArea);
+#}
 
 
 
@@ -150,7 +203,8 @@ sub atoms2Grid {
 #        my $element = substr($$coordDataRef{'atoms'}[$_]{'atomName'}, 0, 1);
         my $element = atomName2Element($$coordDataRef{'atoms'}[$_]{'atomName'});
 #        my $element = $$coordDataRef[$_]{'atomName'};
-        my $radius  = getElementData($element, 'vdwRadius')*1.4;
+#        my $radius  = getElementData($element, 'vdwRadius')*1.4;
+        my $radius  = getElementData($element, 'vdwRadius');
         my $radius2 = $radius * $radius;
         ########################################################################
 
@@ -209,7 +263,7 @@ sub atoms2Grid {
         printf("  Mapping atoms to the grid: %d%%\r", ++$atomId*100/@{$atomsIdsRef}) if $main::verbose;
     }
 
-    printf("  Mapping atoms to the grid: Finished\n  ---------------------------------\n\n") if $main::verbose;
+    printf("  Mapping atoms to the grid: Finished\n  ---------------------------------\n\n");
 
 #        print "\n" . $gridYMax[14] . "\n"; exit;
 
@@ -243,7 +297,7 @@ sub grid2CoordData {
     for (my $z=$gridZMin; $z<=$gridZMax; $z++) {
         for (my $x=$gridXMinAbs; $x<=$gridXMaxAbs; $x++) {
             for (my $y=$gridYMinAbs; $y<=$gridYMaxAbs; $y++) {
-                next if $complete && !$$gridRef[$z][$x][$y];
+                next if $complete || !$$gridRef[$z][$x][$y];
                 my $resName = $$gridRef[$z][$x][$y] ? $$gridRef[$z][$x][$y] : 'VOX';
                 my %tmpCoords = ('cooX' => $x * $gridDeltaX,
                                  'cooY' => $y * $gridDeltaY,
