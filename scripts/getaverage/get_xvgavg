@@ -149,11 +149,11 @@ if ($xvgOutFile) {
     push(@outLines, $headLine . "\n");
 
     for (my $line=0; $line<@meanPerLineOfCol; $line++) {
-        my $valLine = sprintf("%s", $xvgData[0]{'values'}[$line][0]);
+        my $valLine = sprintf("%12.6f", $xvgData[0]{'values'}[$line][0]);
         for (my $col=($compFirst ? 0 : 1); $col<$nCols; $col++) {
-            $valLine .= sprintf("   %s", $meanPerLineOfCol[$line][$col]) if $writeAvg;
-            $valLine .= sprintf("   %s", $variPerLineOfCol[$line][$col]) if $writeVar;
-            $valLine .= sprintf("   %s", $stddPerLineOfCol[$line][$col]) if $writeStd;
+            $valLine .= sprintf("   %12.6f", $meanPerLineOfCol[$line][$col]) if $writeAvg;
+            $valLine .= sprintf("   %12.6f", $variPerLineOfCol[$line][$col]) if $writeVar;
+            $valLine .= sprintf("   %12.6f", $stddPerLineOfCol[$line][$col]) if $writeStd;
         }
         push(@outLines, $valLine . "\n");
     }
