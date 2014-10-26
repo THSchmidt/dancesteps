@@ -264,8 +264,8 @@ sub printHelp {
     print <<EndOfHelp;
 DESCRIPTION
 -----------
-get_xvgavg reads an XVG data file and calculates the average, variance and
-standard deviation.
+get_xvgavg reads multiple XVG data files and calculates the average, variance
+and standard deviation.
 
 USAGE: get_xvgavg -f XVGFILE
 
@@ -282,18 +282,18 @@ EndOfHelp
 
 sub printCopyright {
     print <<"EndOfCopyright";
-Tango is free software; you can redistribute it and/or modify
+DanceSteps is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation; either version 2 of the License, or
 any later version.
 
-Tango is distributed in the hope that it will be useful,
+DanceSteps is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along
-with Tango; if not, write to the Free Software Foundation, Inc.,
+with DanceSteps; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 EndOfCopyright
