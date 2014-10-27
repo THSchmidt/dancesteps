@@ -150,7 +150,7 @@ sub isElement { # $_[0] = element name, if $_[1] = true -> turn warnings off (de
 
 sub getElementData { # $_[0] = $symbol, $_[1] = any element of @keys.
     return unless isElement($_[0]);
-    unless ($elements{$_[0]}{$_[1]}) {
+    unless (defined $elements{$_[0]}{$_[1]}) {
         warn "WARNING: Element \"$_[0]\" has no number.\n";
         return;
     }

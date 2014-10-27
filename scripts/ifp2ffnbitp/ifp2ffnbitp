@@ -1,0 +1,301 @@
+#!/usr/bin/perl -w
+
+# Copyright 2014 Thomas H. Schmidt
+#
+# This file is part of DanceSteps.
+#
+# DanceSteps is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# any later version.
+#
+# DanceSteps is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+### Load Packages ##############################################################
+use strict;
+use IO::Handle;
+use FindBin qw($RealBin); # Absolute path to THIS script.
+use lib ($RealBin."/modules/FileIO", $RealBin."/modules");
+autoflush STDOUT 1; # For direct output.
+
+use Commandline;
+use PTE;
+use FileIO::Basic;
+use FileIO::Ifp;
+################################################################################
+
+
+
+### Default Parameters #########################################################
+our $version    = "rc1";              # Version number.
+our $year       = "2014";             # Year (of change).
+
+our $verbose    = 0;                  # Be loud and noisy (and global); default: silent.
+
+my $ifpInFile   = 'system.ifp';       # Input GROMOS IFP file.
+my $itpOutFile  = "ffnonbonded.itp";  # Output GROMACS ffnonbonded.itp file.
+
+my $helpAndQuit = 0;                  # Print out program help.
+################################################################################
+
+
+
+### Internal parameters ########################################################
+my %ifpData;             # Filled by "IFPFiles::readIfp(<IFPFILE>)".
+my %itpData;
+#my %atomNum = ('');
+################################################################################
+
+
+
+### Print out program headlines ################################################
+printHead();
+################################################################################
+
+
+
+### Handle commandline parameters ##############################################
+addCmdlParam('scalar', 'i',       'Input',       \$ifpInFile,                  $ifpInFile, 'GROMOS file: ifp');
+addCmdlParam('scalar', 'o',       'Input',       \$itpOutFile,                 $itpOutFile, 'GROMACS file: ffnonbonded.itp');
+#addCmdlParam('scalar', 'n',       'Input',       \$ndxInFile,                  $ndxInFile, 'Index file');
+addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
+#addCmdlParam('scalar', 'b',       'time',        \$timeRange{'range'}{'min'},  ($timeRange{'range'}{'min'} ? $timeRange{'range'}{'min'} : 'no'), 'First frame (ps) to read from trajectory');
+#addCmdlParam('scalar', 'e',       'time',        \$timeRange{'range'}{'max'},  $timeRange{'range'}{'max'} ? $timeRange{'range'}{'max'} : 0, 'Last frame (ps) to read from trajectory');
+#addCmdlParam('scalar', 'dt',      'time',        \$timeRange{'range'}{'step'}, $timeRange{'range'}{'step'} ? $timeRange{'range'}{'step'} : 0, '');
+addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
+
+cmdlParser();
+################################################################################
+
+
+
+### Print program help if the user set the flag ################################
+printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
+################################################################################
+
+
+
+### Read the IFP file ##########################################################
+if ($ifpInFile) {
+    %ifpData = FileIO::IFP::readIfp($ifpInFile); # Read input IFP file.
+    die "ERROR: Cannot find IFP data.\n" unless (%ifpData);
+}
+else {
+    printHelp();
+}
+################################################################################
+
+
+
+### Section: atomtypes #########################################################
+for (my $i=0; $i<@{$ifpData{'SINGLEATOMLJPAIR'}}; $i++) {
+#    print $ifpData{'SINGLEATOMLJPAIR'}[$i]{'matrixLine'} . "\n";
+    my @interactions = split(/\s+/, $ifpData{'SINGLEATOMLJPAIR'}[$i]{'matrixLine'});
+    shift(@interactions);
+    my $c6Term  = $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC6'} * $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC6'};
+    my $c12Term = $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC12_' . $interactions[$i]} * $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC12_' . $interactions[$i]};
+
+#    print $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'} . "\n";
+    my $atomNum = getAtomNum($ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'});
+#    print "     => $atomNum\n" if defined $atomNum;
+
+    push(@{$itpData{'atomtypes'}}, sprintf("%5s %4d %10.3f %10.3f %5s %13.10f %13.9e", $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'}, $atomNum, 0, 0, "A", $c6Term, $c12Term));
+}
+################################################################################
+
+
+
+### Section: nonbond_params ####################################################
+for (my $i=1; $i<@{$ifpData{'SINGLEATOMLJPAIR'}}; $i++) {
+    for (my $j=0; $j<$i; $j++) {
+#        print $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'} . "-" . $ifpData{'SINGLEATOMLJPAIR'}[$j]{'atomType'} . "\n";
+        my @iInteractions = split(/\s+/, $ifpData{'SINGLEATOMLJPAIR'}[$i]{'matrixLine'});
+        my @jInteractions = split(/\s+/, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'matrixLine'});
+        shift(@iInteractions);
+        shift(@jInteractions);
+        my $c6Term  = $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC6'} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'sqrtC6'};
+        my $c12Term = $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC12_' . $iInteractions[$j]} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'sqrtC12_' . $jInteractions[$i]};
+
+#        push(@{$itpData{'nonbond_params'}}, sprintf("%5s %5s 1   %13.9E   %13.9E", $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'}, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'atomType'}, $c6Term, $c12Term));
+        push(@{$itpData{'nonbond_params'}}, sprintf("\t%s\t%s\t1\t%12.6E\t%12.6E", $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'}, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'atomType'}, $c6Term, $c12Term)); # For 1-to-1 comparison with existing 54A7 ff.
+    }
+}
+################################################################################
+
+
+
+### Section: pairtypes #########################################################
+for (my $i=0; $i<@{$ifpData{'SINGLEATOMLJPAIR'}}; $i++) {
+    for (my $j=0; $j<=$i; $j++) {
+        my $c6Term  = $ifpData{'SINGLEATOMLJPAIR'}[$i]{'lj14pairCS6'} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'lj14pairCS6'};
+        my $c12Term = $ifpData{'SINGLEATOMLJPAIR'}[$i]{'lj14pairCS12'} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'lj14pairCS12'};
+
+#        push(@{$itpData{'pairtypes'}}, sprintf("%5s %5s 1   %13.9E   %13.9E", $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'}, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'atomType'}, $c6Term, $c12Term));
+        push(@{$itpData{'pairtypes'}}, sprintf("\t%s\t%s\t1\t%12.6E\t%12.6E", $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'}, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'atomType'}, $c6Term, $c12Term)); # For 1-to-1 comparison with existing 54A7 ff.
+    }
+}
+################################################################################
+
+
+
+### Write output ITP file ######################################################
+backupFile($itpOutFile) if -e $itpOutFile;
+open(ITPFILE, ">$itpOutFile") || die "ERROR: Cannot open ITP file \"$itpOutFile\": $!\n";
+
+print ITPFILE "[ atomtypes ]\n;name  at.num    mass     charge ptype            c6             c12\n";
+foreach (@{$itpData{'atomtypes'}}) {
+    print ITPFILE $_ . "\n";
+}
+
+print ITPFILE "\n[ nonbond_params ]\n;   i     j func             c6               c12\n";
+foreach (@{$itpData{'nonbond_params'}}) {
+    print ITPFILE $_ . "\n";
+}
+
+print ITPFILE "\n[ pairtypes ]\n;   i     j func             c6               c12\n";
+foreach (@{$itpData{'pairtypes'}}) {
+    print ITPFILE $_ . "\n";
+}
+print ITPFILE "\n";
+
+close(ITPFILE);
+################################################################################
+
+
+
+################################################################################
+### Subroutines ################################################################
+################################################################################
+sub printHead {
+    my @headLines = ("################################################################################",
+                     "",
+                     "ifp2ffnbitp $version",
+                     "Convert a GROMOS IFP file to the GROMACS ffnonbonded.itp file format.",
+                     "Copyright Thomas H. Schmidt, $year",
+                     "",
+                     "http://code.google.com/p/dancesteps",
+                     "",
+                     "ifp2ffnbitp comes with ABSOLUTELY NO WARRANTY.",
+                     "This is free software, and you are welcome to redistribute it",
+                     "under certain conditions; type `-copyright' for details.",
+                     "",
+                     "################################################################################");
+    my $maxLength = 80;
+    foreach (@headLines) {
+        $maxLength = (length $_ > $maxLength) ? length($_) : $maxLength;
+    }
+
+    foreach (@headLines) {
+        printf "%s%-${maxLength}s\n", ' ' x int(($maxLength - length($_))/2), $_;
+    }
+}
+
+
+
+sub printFoot {
+    print <<EndOfFoot;
+Please cite:
+  [1] Schmidt, T. H. DanceSteps: Dirty toolkit for Molecular Modeling (Manual)
+      http://code.google.com/p/dancesteps
+
+EndOfFoot
+}
+
+
+
+sub printHelp {
+    my $cmdLParamRef   = shift;
+    my $quitAfterPrint = shift;
+
+
+    print <<EndOfHelp;
+DESCRIPTION
+-----------
+ifp2ffnbitp reads a GROMOS IFP file with van der Waals interactions and converts it
+into a GROMACS compatible ITP topology file (ffnonbonded.itp).
+
+USAGE: ifp2ffnbitp -i IFPFILE -o ITPFILE
+
+EndOfHelp
+
+    printParamHelp($cmdLParamRef);
+
+    printFoot();
+
+    exit if $quitAfterPrint;
+}
+
+
+
+sub printCopyright {
+    print <<"EndOfCopyright";
+This file is part of DanceSteps.
+
+DanceSteps is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+any later version.
+
+DanceSteps is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+EndOfCopyright
+    exit;
+}
+
+
+
+sub getAtomNum {
+    my $atomType = shift;
+
+    if (PTE::isElement($atomType, 1)) {
+        return PTE::getElementData($atomType, 'number');
+    }
+    else {
+        $atomType =~ s/[A-Z][a-z]+//g;
+#        print " -> " . $atomType . "\n";
+        return PTE::getElementData($atomType, 'number') if PTE::isElement($atomType, 1);
+
+        if ($atomType =~ /([A-Z])([A-Z]+)/) {
+            my $tempAtomType = $1 . lc($2);
+            return PTE::getElementData($tempAtomType, 'number') if PTE::isElement($tempAtomType, 1);
+        }
+
+        $atomType =~ s/\d//g;
+#        print " -> " . $atomType . "\n";
+        return PTE::getElementData($atomType, 'number') if PTE::isElement($atomType, 1);
+
+        if ($atomType =~ /([A-Z])([A-Z])[\-\+]/) {
+            $atomType = $1 . lc($2);
+        }
+#        print " -> " . $atomType . "\n";
+        return PTE::getElementData($atomType, 'number') if PTE::isElement($atomType, 1);
+
+        if ($atomType =~ /([A-Z])([A-Z])/) {
+            $atomType = $1 . lc($2);
+        }
+#        print " -> " . $atomType . "\n";
+        return PTE::getElementData($atomType, 'number') if PTE::isElement($atomType, 1);
+
+        if ($atomType =~ /([A-Z])[A-Za-z]+$/) {
+            $atomType = $1;
+        }
+#        print " -> " . $atomType . "\n";
+        return PTE::getElementData($atomType, 'number') if PTE::isElement($atomType, 1);
+    }
+    return 0;
+}
