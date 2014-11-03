@@ -132,8 +132,57 @@ sub readSec_SINGLEATOMLJPAIR {
 #            print $data[$currAtomId]{'matrixLine'} . "\n" if $data[$currAtomId]{'matrixLine'};
 #        }
     }
-    
-    return \@data;
+
+    return cleanAndExtend_SINGLEATOMLJPAIR(\@data);
+
+    return \@data; # Only true if the cleanAndExtend routine is commented out.
+}
+
+
+
+sub cleanAndExtend_SINGLEATOMLJPAIR {
+    my $dataRef = shift;
+
+    my @extData = @{$dataRef};
+
+    for (my $currAtomId=0; $currAtomId<@$dataRef; $currAtomId++) {
+        next unless defined $currAtomId;
+
+        if ($$dataRef[$currAtomId]{'atomType'} =~ /,/) {
+            my @tmpArray = split(/,/, $$dataRef[$currAtomId]{'atomType'});
+            $extData[$currAtomId]{'atomType'}  = $tmpArray[0]; # Replace the original atom type by the first type in the comma separated list.
+
+            ### Generate new entries for the other atom types in the list based on the current atom ID.
+            for (my $i=1; $i<@tmpArray; $i++) {
+                my @iInteractions = split(/\s+/, $$dataRef[$currAtomId]{'matrixLine'});
+                shift(@iInteractions);
+
+                my %tmpHash;
+                $tmpHash{'atomType'}     = $tmpArray[$i];
+                $tmpHash{'sqrtC6'}       = $$dataRef[$currAtomId]{'sqrtC6'};
+                $tmpHash{'sqrtC12_1'}    = $$dataRef[$currAtomId]{'sqrtC12_1'};
+                $tmpHash{'sqrtC12_2'}    = $$dataRef[$currAtomId]{'sqrtC12_2'};
+                $tmpHash{'sqrtC12_3'}    = $$dataRef[$currAtomId]{'sqrtC12_3'};
+                $tmpHash{'lj14pairCS6'}  = $$dataRef[$currAtomId]{'lj14pairCS6'};
+                $tmpHash{'lj14pairCS12'} = $$dataRef[$currAtomId]{'lj14pairCS12'};
+                $tmpHash{'matrixLine'}   = sprintf("%s   %d", $$dataRef[$currAtomId]{'matrixLine'}, $iInteractions[$currAtomId]);
+                push(@extData, \%tmpHash);
+
+                ### Extend the matrix for each of ALL the other atom types #####
+                for (my $currAtomIdTmp=0; $currAtomIdTmp<@extData; $currAtomIdTmp++) {
+                    next unless defined $currAtomIdTmp;
+
+                    my @jInteractions = split(/\s+/, $extData[$currAtomIdTmp]{'matrixLine'});
+                    shift(@jInteractions);
+                    $extData[$currAtomIdTmp]{'matrixLine'} .= sprintf("   %d", $jInteractions[$currAtomId]);
+                }
+                ################################################################
+            }
+            ####################################################################
+        }
+    }
+
+    return \@extData;
 }
 
 
