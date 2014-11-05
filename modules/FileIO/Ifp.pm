@@ -84,7 +84,7 @@ sub readIfp {
             $ifpData{'SINGLEATOMLJPAIR'} = readSec_SINGLEATOMLJPAIR($_);
         }
         elsif ($sectionName eq 'MIXEDATOMLJPAIR') {
-            
+            $ifpData{'MIXEDATOMLJPAIR'} = readSec_MIXEDATOMLJPAIR($_);
         }
         elsif ($sectionName eq 'SPECATOMLJPAIR') {
             
@@ -200,6 +200,31 @@ sub readSec_TORSDIHEDRALTYPECODE {
         elsif (defined $currProDihId && $_ =~ /^#\s*((.|\(|\|\s)+)\s*$/) {
 #            print "; " . $1 . "\n;\n";
             $data[$currProDihId]{'remarks'} = $1;
+        }
+    }
+
+    return \@data;
+}
+
+
+
+sub readSec_MIXEDATOMLJPAIR {
+    my $sectionDataRef = shift;
+
+    my @data;
+    my $iMixedId;
+    my $jMixedId;
+
+    foreach (@{$sectionDataRef}) {
+#        print $_ . "\n";
+        if ($_ =~ /^\s*(\d+)\s+(\d+)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s*$/) {
+            $iMixedId = $1 - 1;
+            $jMixedId = $2 - 1;
+            $data[$iMixedId][$jMixedId]{'c6Term'}  = $3;
+            $data[$iMixedId][$jMixedId]{'c12Term'} = $5;
+            $data[$jMixedId][$iMixedId]{'c6Term'}  = $7;
+            $data[$jMixedId][$iMixedId]{'c12Term'} = $9;
+#            print $data[$iMixedId][$jMixedId]{'c6Term'} . "  " . $data[$iMixedId][$jMixedId]{'c12Term'} . " $iMixedId $jMixedId\n";
         }
     }
 
