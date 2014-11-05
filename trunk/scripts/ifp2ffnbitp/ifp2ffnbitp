@@ -53,18 +53,6 @@ my $helpAndQuit  = 0;                 # Print out program help.
 ### Internal parameters ########################################################
 my %ifpData;                         # Filled by "IFPFiles::readIfp(<IFPFILE>)".
 my %itpData;
-my @mixedPairs;
-################################################################################
-
-
-
-### Special C6 & C12 cases #####################################################
-$mixedPairs[38][39]{'c6Term'}  = 4.6754E-3; # Index = (<G96 atom ID> - 1).
-$mixedPairs[38][39]{'c12Term'} = 7.4813E-6;
-$mixedPairs[38][40]{'c6Term'}  = 3.622E-4;
-$mixedPairs[38][40]{'c12Term'} = 1.745E-7;
-$mixedPairs[39][40]{'c6Term'}  = 6.493E-4;
-$mixedPairs[39][40]{'c12Term'} = 3.266E-7;
 ################################################################################
 
 
@@ -174,7 +162,6 @@ close(ITPFILE);
 ################################################################################
 
 
-exit;
 
 ################################################################################
 ### Convert nonbonded parameters ###############################################
@@ -206,8 +193,8 @@ for (my $i=1; $i<@{$ifpData{'SINGLEATOMLJPAIR'}}; $i++) {
         my @jInteractions = split(/\s+/, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'matrixLine'});
         shift(@iInteractions);
         shift(@jInteractions);
-        my $c6Term  = defined($mixedPairs[$j][$i]) ? $mixedPairs[$j][$i]{'c6Term'} : $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC6'} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'sqrtC6'};
-        my $c12Term = defined($mixedPairs[$j][$i]) ? $mixedPairs[$j][$i]{'c12Term'} : $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC12_' . $iInteractions[$j]} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'sqrtC12_' . $jInteractions[$i]};
+        my $c6Term  = defined($ifpData{'MIXEDATOMLJPAIR'}[$j][$i]) ? $ifpData{'MIXEDATOMLJPAIR'}[$j][$i]{'c6Term'} : $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC6'} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'sqrtC6'};
+        my $c12Term = defined($ifpData{'MIXEDATOMLJPAIR'}[$j][$i]) ? $ifpData{'MIXEDATOMLJPAIR'}[$j][$i]{'c12Term'} : $ifpData{'SINGLEATOMLJPAIR'}[$i]{'sqrtC12_' . $iInteractions[$j]} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'sqrtC12_' . $jInteractions[$i]};
 
 #        push(@{$itpData{'nonbond_params'}}, sprintf("%5s %5s 1   %13.9E   %13.9E", $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'}, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'atomType'}, $c6Term, $c12Term));
         push(@{$itpData{'nonbond_params'}}, sprintf("\t%s\t%s\t1\t%12.6E\t%12.6E", $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'}, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'atomType'}, $c6Term, $c12Term)); # For 1-to-1 comparison with existing 54A7 ff.
@@ -220,8 +207,8 @@ for (my $i=1; $i<@{$ifpData{'SINGLEATOMLJPAIR'}}; $i++) {
 ### Section: pairtypes #########################################################
 for (my $i=0; $i<@{$ifpData{'SINGLEATOMLJPAIR'}}; $i++) {
     for (my $j=0; $j<=$i; $j++) {
-        my $c6Term  = defined($mixedPairs[$j][$i]) ? $mixedPairs[$j][$i]{'c6Term'} : $ifpData{'SINGLEATOMLJPAIR'}[$i]{'lj14pairCS6'} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'lj14pairCS6'};
-        my $c12Term = defined($mixedPairs[$j][$i]) ? $mixedPairs[$j][$i]{'c12Term'} : $ifpData{'SINGLEATOMLJPAIR'}[$i]{'lj14pairCS12'} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'lj14pairCS12'};
+        my $c6Term  = defined($ifpData{'MIXEDATOMLJPAIR'}[$j][$i]) ? $ifpData{'MIXEDATOMLJPAIR'}[$j][$i]{'c6Term'} : $ifpData{'SINGLEATOMLJPAIR'}[$i]{'lj14pairCS6'} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'lj14pairCS6'};
+        my $c12Term = defined($ifpData{'MIXEDATOMLJPAIR'}[$j][$i]) ? $ifpData{'MIXEDATOMLJPAIR'}[$j][$i]{'c12Term'} : $ifpData{'SINGLEATOMLJPAIR'}[$i]{'lj14pairCS12'} * $ifpData{'SINGLEATOMLJPAIR'}[$j]{'lj14pairCS12'};
 
 #        push(@{$itpData{'pairtypes'}}, sprintf("%5s %5s 1   %13.9E   %13.9E", $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'}, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'atomType'}, $c6Term, $c12Term));
         push(@{$itpData{'pairtypes'}}, sprintf("\t%s\t%s\t1\t%12.6E\t%12.6E", $ifpData{'SINGLEATOMLJPAIR'}[$i]{'atomType'}, $ifpData{'SINGLEATOMLJPAIR'}[$j]{'atomType'}, $c6Term, $c12Term)); # For 1-to-1 comparison with existing 54A7 ff.
@@ -269,13 +256,13 @@ close(ITPFILE);
 sub printHead {
     my @headLines = ("################################################################################",
                      "",
-                     "ifp2ffnbitp $version",
-                     "Convert a GROMOS IFP file to the GROMACS ffnonbonded.itp file format.",
+                     "ifp2itp $version",
+                     "Convert a GROMOS IFP file to the GROMACS ITP file format.",
                      "Copyright Thomas H. Schmidt, $year",
                      "",
                      "http://code.google.com/p/dancesteps",
                      "",
-                     "ifp2ffnbitp comes with ABSOLUTELY NO WARRANTY.",
+                     "ifp2itp comes with ABSOLUTELY NO WARRANTY.",
                      "This is free software, and you are welcome to redistribute it",
                      "under certain conditions; type `-copyright' for details.",
                      "",
@@ -311,16 +298,10 @@ sub printHelp {
     print <<EndOfHelp;
 DESCRIPTION
 -----------
-ifp2ffnbitp reads a GROMOS IFP file with van der Waals interactions and converts
-it into a GROMACS compatible ITP topology file (ffnonbonded.itp).
+ifp2itp reads a GROMOS IFP file with van der Waals interactions and converts
+it into a GROMACS compatible ITP topology file (ffbonded.itp and ffnonbonded.itp).
 
-USAGE: ifp2ffnbitp -i IFPFILE -o ITPFILE
-
-NOTE: Take care of cases where the combination rules are not applied, and the
-      interactions between specific atom types are directly defined through so-
-      called mixed atom type pairs. Such cases are Chl-CLChl, CChl-HChl, and
-      CLChl-HChl. Corresponding C6 and C12 terms are hard coded in the
-      @mixedPairs array.
+USAGE: ifp2itp -i IFPFILE -ob BONDED-ITPFILE -onb NONBONDED-ITPFILE
 
 EndOfHelp
 
