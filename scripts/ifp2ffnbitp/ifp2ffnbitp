@@ -25,6 +25,7 @@ use IO::Handle;
 use FindBin qw($RealBin); # Absolute path to THIS script.
 use lib ($RealBin."/modules/FileIO", $RealBin."/modules");
 autoflush STDOUT 1; # For direct output.
+ use Math::Trig;
 
 use Commandline;
 use PTE;
@@ -35,15 +36,16 @@ use FileIO::Ifp;
 
 
 ### Default Parameters #########################################################
-our $version    = "rc1";             # Version number.
-our $year       = "2014";            # Year (of change).
+our $version     = "rc1";             # Version number.
+our $year        = "2014";            # Year (of change).
 
-our $verbose    = 0;                 # Be loud and noisy (and global); default: silent.
+our $verbose     = 0;                 # Be loud and noisy (and global); default: silent.
 
-my $ifpInFile   = 'system.ifp';      # Input GROMOS IFP file.
-my $itpOutFile  = "ffnonbonded.itp"; # Output GROMACS ffnonbonded.itp file.
+my $ifpInFile    = 'system.ifp';      # Input GROMOS IFP file.
+my $bItpOutFile  = "ffbonded.itp";    # Output GROMACS ffbonded.itp file.
+my $nbItpOutFile = "ffnonbonded.itp"; # Output GROMACS ffnonbonded.itp file.
 
-my $helpAndQuit = 0;                 # Print out program help.
+my $helpAndQuit  = 0;                 # Print out program help.
 ################################################################################
 
 
@@ -75,7 +77,8 @@ printHead();
 
 ### Handle commandline parameters ##############################################
 addCmdlParam('scalar', 'i',       'Input',       \$ifpInFile,                  $ifpInFile, 'GROMOS file: ifp');
-addCmdlParam('scalar', 'o',       'Input',       \$itpOutFile,                 $itpOutFile, 'GROMACS file: ffnonbonded.itp');
+addCmdlParam('scalar', 'ob',      'Output',      \$bItpOutFile,                $bItpOutFile, 'GROMACS file: itp');
+addCmdlParam('scalar', 'onb',     'Output',      \$nbItpOutFile,               $nbItpOutFile, 'GROMACS file: itp');
 addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
 addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
 
@@ -101,6 +104,81 @@ else {
 ################################################################################
 
 
+
+################################################################################
+### Convert bonded parameters ##################################################
+################################################################################
+
+### Section: bond-stretching parameters ########################################
+for (my $i=0; $i<@{$ifpData{'BONDSTRETCHTYPECODE'}}; $i++) {
+    next unless $ifpData{'BONDSTRETCHTYPECODE'}[$i];
+    push(@{$itpData{'bonds'}}, sprintf("#define gb_%-2d       %8.6f  %8.4e\n; %s\n;", $i+1, $ifpData{'BONDSTRETCHTYPECODE'}[$i]{'B0'}, $ifpData{'BONDSTRETCHTYPECODE'}[$i]{'CB'}, $ifpData{'BONDSTRETCHTYPECODE'}[$i]{'remarks'}));
+}
+################################################################################
+
+
+### Section: bond-angle bending parameters #####################################
+for (my $i=0; $i<@{$ifpData{'BONDANGLEBENDTYPECODE'}}; $i++) {
+    next unless $ifpData{'BONDANGLEBENDTYPECODE'}[$i];
+    push(@{$itpData{'angles'}}, sprintf("#define ga_%-2d       %6.2f      %6.2f\n; %s\n;", $i+1, $ifpData{'BONDANGLEBENDTYPECODE'}[$i]{'T0'}, $ifpData{'BONDANGLEBENDTYPECODE'}[$i]{'CT'}, $ifpData{'BONDANGLEBENDTYPECODE'}[$i]{'remarks'}));
+}
+################################################################################
+
+
+### Section: improper (harmonic) dihedral angle parameters #####################
+for (my $i=0; $i<@{$ifpData{'IMPDIHEDRALTYPECODE'}}; $i++) {
+    next unless $ifpData{'IMPDIHEDRALTYPECODE'}[$i];
+    push(@{$itpData{'impdih'}}, sprintf("#define gi_%-2d    %8.5f   %8.5f\n; %s\n;", $i+1, $ifpData{'IMPDIHEDRALTYPECODE'}[$i]{'Q0'}, (rad2deg(sqrt($ifpData{'IMPDIHEDRALTYPECODE'}[$i]{'CQ'})))**2, $ifpData{'IMPDIHEDRALTYPECODE'}[$i]{'remarks'}));
+}
+################################################################################
+
+
+
+### Section: dihedral torsional angle parameters ###############################
+for (my $i=0; $i<@{$ifpData{'TORSDIHEDRALTYPECODE'}}; $i++) {
+    next unless $ifpData{'TORSDIHEDRALTYPECODE'}[$i];
+    push(@{$itpData{'tordih'}}, sprintf("#define gd_%-2d  %8.3f   %8.2f          %d\n; %s\n;", $i+1, $ifpData{'TORSDIHEDRALTYPECODE'}[$i]{'PD'}, $ifpData{'TORSDIHEDRALTYPECODE'}[$i]{'CP'}, $ifpData{'TORSDIHEDRALTYPECODE'}[$i]{'NP'}, $ifpData{'TORSDIHEDRALTYPECODE'}[$i]{'remarks'}));
+}
+################################################################################
+
+
+### Write output ITP file ######################################################
+backupFile($bItpOutFile) if -e $bItpOutFile;
+open(ITPFILE, ">$bItpOutFile") || die "ERROR: Cannot open ITP file \"$bItpOutFile\": $!\n";
+
+print ITPFILE "; Table 2.5.2.1\n;       GROMOS bond-stretching parameters\n;\n;\n;   Bond type code\n;   Force constant\n;   Ideal bond length\n;   Examples of usage in terms of non-bonded atom types\n;\n;\n;   ICB(H)[N]    CB[N] B0[N]\n;\n";
+foreach (@{$itpData{'bonds'}}) {
+    print ITPFILE $_ . "\n";
+}
+
+print ITPFILE ";---\n;       Table 2.5.3.1.\n;       GROMOS bond-angle bending parameters\n;\n;\n; Bond-angle type code\n; Force constant\n; Ideal bond angle\n; Example of usage in terms of non-bonded atom types\n;\n;\n;  ICT(H)[N]  CT[N]  (T0[N])\n;\n";
+foreach (@{$itpData{'angles'}}) {
+    print ITPFILE $_ . "\n";
+}
+
+print ITPFILE ";---\n;       Table 2.5.4.1\n;       GROMOS improper (harmonic) dihedral angle parameters\n;\n;\n; Improper dihedral-angle type code\n; Force constant\n; Ideal improper dihedral angle\n; Example of usage\n;\n;\n; ICQ(H)[N] CQ[N] (Q0[N])\n;\n";
+foreach (@{$itpData{'impdih'}}) {
+    print ITPFILE $_ . "\n";
+}
+
+print ITPFILE ";---\n;       Table 2.5.5.1 (Note: changes with respect to the 43A1 table)\n\n;       GROMOS (trigonometric) dihedral torsional angle parameters\n;\n;\n; Dihedral-angle type code\n; Force constant\n; Phase shift\n; Multiplicity\n; Example of usage in terms of non-bonded atom types\n;\n;\n; ICP(H)[N]  CP[N] PD[N] NP[N]\n;\n";
+foreach (@{$itpData{'tordih'}}) {
+    print ITPFILE $_ . "\n";
+}
+
+close(ITPFILE);
+################################################################################
+
+################################################################################
+################################################################################
+################################################################################
+
+
+exit;
+
+################################################################################
+### Convert nonbonded parameters ###############################################
+################################################################################
 
 ### Section: atomtypes #########################################################
 for (my $i=0; $i<@{$ifpData{'SINGLEATOMLJPAIR'}}; $i++) {
@@ -154,8 +232,8 @@ for (my $i=0; $i<@{$ifpData{'SINGLEATOMLJPAIR'}}; $i++) {
 
 
 ### Write output ITP file ######################################################
-backupFile($itpOutFile) if -e $itpOutFile;
-open(ITPFILE, ">$itpOutFile") || die "ERROR: Cannot open ITP file \"$itpOutFile\": $!\n";
+backupFile($nbItpOutFile) if -e $nbItpOutFile;
+open(ITPFILE, ">$nbItpOutFile") || die "ERROR: Cannot open ITP file \"$nbItpOutFile\": $!\n";
 
 print ITPFILE "[ atomtypes ]\n;name  at.num    mass     charge ptype            c6             c12\n";
 foreach (@{$itpData{'atomtypes'}}) {
@@ -175,6 +253,13 @@ print ITPFILE "\n";
 
 close(ITPFILE);
 ################################################################################
+
+################################################################################
+################################################################################
+################################################################################
+
+
+
 
 
 

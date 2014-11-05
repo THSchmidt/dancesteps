@@ -69,16 +69,16 @@ sub readIfp {
             
         }
         elsif ($sectionName eq 'BONDSTRETCHTYPECODE') {
-            
+            $ifpData{'BONDSTRETCHTYPECODE'} = readSec_BONDSTRETCHTYPECODE($_);
         }
         elsif ($sectionName eq 'BONDANGLEBENDTYPECODE') {
-            
+            $ifpData{'BONDANGLEBENDTYPECODE'} = readSec_BONDANGLEBENDTYPECODE($_);
         }
         elsif ($sectionName eq 'IMPDIHEDRALTYPECODE') {
-            
+            $ifpData{'IMPDIHEDRALTYPECODE'} = readSec_IMPDIHEDRALTYPECODE($_);
         }
         elsif ($sectionName eq 'TORSDIHEDRALTYPECODE') {
-            
+            $ifpData{'TORSDIHEDRALTYPECODE'} = readSec_TORSDIHEDRALTYPECODE($_);
         }
         elsif ($sectionName eq 'SINGLEATOMLJPAIR') {
             $ifpData{'SINGLEATOMLJPAIR'} = readSec_SINGLEATOMLJPAIR($_);
@@ -100,6 +100,110 @@ sub readIfp {
     print "  Read IFP file \"$ifpFile\": Finished\n  ---------------------------------\n\n";
 
     return %ifpData;
+}
+
+
+
+sub readSec_BONDSTRETCHTYPECODE {
+    my $sectionDataRef = shift;
+
+    my @data;
+    my $currBondId;
+
+    foreach (@{$sectionDataRef}) {
+#        print $_ . "\n";
+        if ($_ =~ /^\s*(\d+)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s*$/) {
+            $currBondId = $1 - 1;
+            $data[$currBondId]{'CB'} = $2;
+            $data[$currBondId]{'HB'} = $4;
+            $data[$currBondId]{'B0'} = $6;
+#            print $data[$currBondId]{'CB'} . "  " . $data[$currBondId]{'B0'} . " $currBondId\n";
+        }
+        elsif (defined $currBondId && $_ =~ /^#\s*((.|\(|\|\s)+)\s*$/) {
+#        elsif (defined $currBondId && $_ =~ /^#\s*((.|\(|\))+\s+-\s+(.|\(|\))+(\s+\d+)?)\s*$/) {
+#            print "; " . $1 . "\n;\n";
+            $data[$currBondId]{'remarks'} = $1;
+        }
+    }
+
+    return \@data;
+}
+
+
+
+sub readSec_BONDANGLEBENDTYPECODE {
+    my $sectionDataRef = shift;
+
+    my @data;
+    my $currAngleId;
+
+    foreach (@{$sectionDataRef}) {
+#        print $_ . "\n";
+        if ($_ =~ /^\s*(\d+)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s*$/) {
+            $currAngleId = $1 - 1;
+            $data[$currAngleId]{'CT'}  = $2;
+            $data[$currAngleId]{'CHT'} = $4;
+            $data[$currAngleId]{'T0'}  = $6;
+#            print $data[$currAngleId]{'CT'} . "  " . $data[$currAngleId]{'T0'} . " $currAngleId\n";
+        }
+        elsif (defined $currAngleId && $_ =~ /^#\s*((.|\(|\|\s)+)\s*$/) {
+#            print "; " . $1 . "\n;\n";
+            $data[$currAngleId]{'remarks'} = $1;
+        }
+    }
+
+    return \@data;
+}
+
+
+
+sub readSec_IMPDIHEDRALTYPECODE {
+    my $sectionDataRef = shift;
+
+    my @data;
+    my $currImpDihId;
+
+    foreach (@{$sectionDataRef}) {
+#        print $_ . "\n";
+        if ($_ =~ /^\s*(\d+)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s*$/) {
+            $currImpDihId = $1 - 1;
+            $data[$currImpDihId]{'CQ'}  = $2;
+            $data[$currImpDihId]{'Q0'}  = $4;
+#            print $data[$currImpDihId]{'CQ'} . "  " . $data[$currImpDihId]{'Q0'} . " $currImpDihId\n";
+        }
+        elsif (defined $currImpDihId && $_ =~ /^#\s*((.|\(|\|\s)+)\s*$/) {
+#            print "; " . $1 . "\n;\n";
+            $data[$currImpDihId]{'remarks'} = $1;
+        }
+    }
+
+    return \@data;
+}
+
+
+
+sub readSec_TORSDIHEDRALTYPECODE {
+    my $sectionDataRef = shift;
+
+    my @data;
+    my $currProDihId;
+
+    foreach (@{$sectionDataRef}) {
+#        print $_ . "\n";
+        if ($_ =~ /^\s*(\d+)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)\s+(\d+)\s*$/) {
+            $currProDihId = $1 - 1;
+            $data[$currProDihId]{'CP'}  = $2;
+            $data[$currProDihId]{'PD'}  = $4;
+            $data[$currProDihId]{'NP'}  = $6;
+#            print $data[$currProDihId]{'CP'} . "  " . $data[$currProDihId]{'PD'} . " $currProDihId\n";
+        }
+        elsif (defined $currProDihId && $_ =~ /^#\s*((.|\(|\|\s)+)\s*$/) {
+#            print "; " . $1 . "\n;\n";
+            $data[$currProDihId]{'remarks'} = $1;
+        }
+    }
+
+    return \@data;
 }
 
 
