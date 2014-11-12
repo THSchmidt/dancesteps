@@ -1,0 +1,182 @@
+#!/usr/bin/perl -w
+
+# Copyright 2014 Thomas H. Schmidt
+#
+# This file is part of DanceSteps.
+#
+# DanceSteps is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# any later version.
+#
+# DanceSteps is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+### Load Packages ##############################################################
+use strict;
+use IO::Handle;
+use FindBin qw($RealBin); # Absolute path to THIS script.
+use lib ($RealBin."/modules/FileIO", $RealBin."/modules");
+autoflush STDOUT 1; # For direct output.
+
+use Commandline;
+use FileIO::Basic;
+use FileIO::Top;
+################################################################################
+
+
+
+### Default Parameters #########################################################
+our $version    = "rc1";             # Version number.
+our $year       = "2014";            # Year (of change).
+
+our $verbose    = 0;                 # Be loud and noisy (and global); default: silent.
+
+my $topInFile   = 'system.top';      # Input GROMOS TOP file.
+my $topOutFile  = 'cleaned.top';     # Output GROMACS TOP file.
+
+my $helpAndQuit = 0;                 # Print out program help.
+################################################################################
+
+
+
+### Internal parameters ########################################################
+my %topData;                         # Filled by "TOPFiles::readTop(<TOPFILE>)".
+################################################################################
+
+
+
+### Print out program headlines ################################################
+printHead();
+################################################################################
+
+
+
+### Handle commandline parameters ##############################################
+addCmdlParam('scalar', 'i',       'Input',       \$topInFile,                  $topInFile, 'GROMOS file: top');
+addCmdlParam('scalar', 'o',       'Output',      \$topOutFile,                 $topOutFile, 'GROMACS file: top');
+addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
+addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
+
+cmdlParser();
+################################################################################
+
+
+
+### Print program help if the user set the flag ################################
+printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
+################################################################################
+
+
+
+### Read the TOP file ##########################################################
+if ($topInFile) {
+    %topData = FileIO::TOP::readTop($topInFile); # Read input TOP file.
+    die "ERROR: Cannot find TOP data.\n" unless %topData;
+}
+else {
+    printHelp();
+}
+################################################################################
+
+
+
+### Write output TOP file ######################################################
+backupFile($topOutFile) if -e $topOutFile;
+FileIO::TOP::writeTop($topOutFile, \%topData);
+################################################################################
+
+
+
+################################################################################
+### Subroutines ################################################################
+################################################################################
+sub printHead {
+    my @headLines = ("################################################################################",
+                     "",
+                     "cleantop $version",
+                     "Cleans up a GROMOS TOP file by reducing the number of molecules.",
+                     "Copyright Thomas H. Schmidt, $year",
+                     "",
+                     "http://code.google.com/p/dancesteps",
+                     "",
+                     "cleantop comes with ABSOLUTELY NO WARRANTY.",
+                     "This is free software, and you are welcome to redistribute it",
+                     "under certain conditions; type `-copyright' for details.",
+                     "",
+                     "################################################################################");
+    my $maxLength = 80;
+    foreach (@headLines) {
+        $maxLength = (length $_ > $maxLength) ? length($_) : $maxLength;
+    }
+
+    foreach (@headLines) {
+        printf "%s%-${maxLength}s\n", ' ' x int(($maxLength - length($_))/2), $_;
+    }
+}
+
+
+
+sub printFoot {
+    print <<EndOfFoot;
+Please cite:
+  [1] Schmidt, T. H. DanceSteps: Dirty toolkit for Molecular Modeling (Manual)
+      http://code.google.com/p/dancesteps
+
+EndOfFoot
+}
+
+
+
+sub printHelp {
+    my $cmdLParamRef   = shift;
+    my $quitAfterPrint = shift;
+
+
+    print <<EndOfHelp;
+DESCRIPTION
+-----------
+cleantop reads a GROMOS TOP file and cleans up multiple entries of the same
+molecule type.
+
+USAGE: cleantop -i TOPFILE -o TOPFILE
+
+EndOfHelp
+
+    printParamHelp($cmdLParamRef);
+
+    printFoot();
+
+    exit if $quitAfterPrint;
+}
+
+
+
+sub printCopyright {
+    print <<"EndOfCopyright";
+This file is part of DanceSteps.
+
+DanceSteps is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+any later version.
+
+DanceSteps is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+EndOfCopyright
+    exit;
+}

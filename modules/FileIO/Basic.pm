@@ -45,7 +45,7 @@ sub backupFile {
         }
     }
     File::Copy::copy($file, $tmpDir . $backupFile) || die "ERROR: Cannot backup file  \"$file\" to \"$tmpDir$backupFile\": $!\n";
-    print "\nBack Off! I just backed up $file to $tmpDir$backupFile\n" if $main::verbose;
+    print "\nBack Off! I just backed up $file to $tmpDir$backupFile\n";
     return $tmpDir . $backupFile;
 }
 
