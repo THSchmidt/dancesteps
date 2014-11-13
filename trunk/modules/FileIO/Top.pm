@@ -46,8 +46,8 @@ sub readTop {
         }
         
         if ($molSwitch && $_ =~ /^\s*(\w+)\s+(\d+)\s*$/) {
-#            my %tmpHash = ('molType' => $1);
-            $topData{'molecules'}{$1} += $2;
+            my %tmpHash = ('molType' => $1, 'molNum' => $2);
+            push(@{$topData{'molecules'}}, \%tmpHash);
         }
         else {
             push(@{$topData{'lines'}}, $_);
@@ -70,9 +70,9 @@ sub writeTop {
         print TOPFILE $_ . "\n";
     }
 
-    print TOPFILE "\n[ molecules ]\n";
-    foreach my $molType (keys %{$$topDataRef{'molecules'}}) {
-        printf TOPFILE ("%-14s %6d\n", $molType, $$topDataRef{'molecules'}{$molType});
+#    print TOPFILE "\n[ molecules ]\n";
+    foreach (@{$$topDataRef{'molecules'}}) {
+        printf TOPFILE ("%-10s  %6d\n", $$_{'molType'}, $$_{'molNum'});
     }
     close(TOPFILE);
 }
