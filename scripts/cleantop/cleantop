@@ -39,7 +39,8 @@ our $year       = "2014";            # Year (of change).
 
 our $verbose    = 0;                 # Be loud and noisy (and global); default: silent.
 
-my $topInFile   = 'system.top';      # Input GROMOS TOP file.
+my $topInFile   = 'system.top';      # Input GROMACS TOP file.
+my $groInFile   = '';                # Input GROMACS TOP file.
 my $topOutFile  = 'cleaned.top';     # Output GROMACS TOP file.
 
 my $helpAndQuit = 0;                 # Print out program help.
@@ -60,7 +61,8 @@ printHead();
 
 
 ### Handle commandline parameters ##############################################
-addCmdlParam('scalar', 'i',       'Input',       \$topInFile,                  $topInFile, 'GROMOS file: top');
+addCmdlParam('scalar', 'i',       'Input',       \$topInFile,                  $topInFile, 'GROMACS file: top');
+addCmdlParam('scalar', 'c',       'Input',       \$groInFile,                  $groInFile, 'GROMACS file: gro');
 addCmdlParam('scalar', 'o',       'Output',      \$topOutFile,                 $topOutFile, 'GROMACS file: top');
 addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
 addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
@@ -84,6 +86,30 @@ if ($topInFile) {
 else {
     printHelp();
 }
+################################################################################
+
+
+
+### Clean up data ##############################################################
+my @newMolList;
+if ($groInFile) {
+    backupFile("resorted." . $groInFile) if -e "resorted." . $groInFile;
+}
+my %absMolNums; # Hash to sum up the number of molecules of a certain type.
+foreach (@{$topData{'molecules'}}) {
+    $absMolNums{$$_{'molType'}} += $$_{'molNum'};
+}
+
+foreach (@{$topData{'molecules'}}) {
+    if ($absMolNums{$$_{'molType'}}) {
+        my %tmpHash = ('molType' => $$_{'molType'}, 'molNum' => $absMolNums{$$_{'molType'}});
+        push(@newMolList, \%tmpHash);
+        print "$$_{'molType'}  " . $absMolNums{$$_{'molType'}} . "\n";
+        system("egrep '^[[:space:]]*[0-9]+[[:space:]]*" . $$_{'molType'} . "' " . $groInFile . " >>resorted." . $groInFile) if $groInFile; # This works only if the molecule type definition = residue name (e.g. for lipids).
+        $absMolNums{$$_{'molType'}} = 0;
+    }
+}
+$topData{'molecules'} = \@newMolList;
 ################################################################################
 
 

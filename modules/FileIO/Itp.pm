@@ -1,4 +1,4 @@
-# Copyright 2012 Thomas H. Schmidt
+# Copyright 2014 Thomas H. Schmidt
 #
 # This file is part of DanceSteps.
 #
