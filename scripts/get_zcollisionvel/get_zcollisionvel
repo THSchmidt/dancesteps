@@ -1,0 +1,165 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+
+### Load Packages & Modules ####################################################
+use strict;
+#use Cwd;
+#use Fcntl;
+use IO::Handle;
+use FindBin qw($RealBin); # Absolute path to THIS script.
+use lib $RealBin . "/modules";
+autoflush STDOUT 1; # For direct output (IO:Handle).
+
+use cmdline;
+use FileIO::gro;
+################################################################################
+
+
+
+### Default Parameters #########################################################
+our $version        = "rc1";              # Version number.
+our $year           = "2012";             # Year (of change).
+
+our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
+my $groInFile       = 'system.gro';       # Input GRO file.
+my $groOutFile      = 'system.newzvel.gro'; # Output GRO file.
+my $helpAndQuit     = 0;                  # Print out program help.
+################################################################################
+
+
+
+### Internal parameters ########################################################
+my %coordData;         # Filled by "GROFiles::readGro(<GROFILE>)".
+my $halfZBox;
+################################################################################
+
+
+
+### Print out program headlines ################################################
+printHead();
+################################################################################
+
+
+
+### Handle commandline parameters ##############################################
+Cmdline::addCmdlParam('scalar', 'f', 'Input', \$groInFile, $groInFile, 'Structure file: gro');
+Cmdline::addCmdlParam('scalar', 'o', 'Output', \$groOutFile, $groOutFile, 'Structure file: gro');
+#Cmdline::addCmdlParam('array', 't', 'Input, Mult.', \@multiArray, 'traj.gro', 'Trajectory: gro'); # NOTE: Just an example.
+Cmdline::addCmdlParam('flag', 'h', 'bool', \$helpAndQuit, $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
+Cmdline::addCmdlParam('flag', 'v', 'bool', \$verbose, $verbose ? 'yes' : 'no', 'Be loud and noisy');
+
+Cmdline::parser();
+################################################################################
+
+
+
+### Read the GRO files #########################################################
+%coordData = GRO::readGro($groInFile); # Read input GRO file.
+$halfZBox = $coordData{'box'}{'cooZ'} / 2;
+
+for (my $i=1; $i<@{$coordData{'atoms'}}; $i++) {
+    next unless $coordData{'atoms'}[$i]{'atomName'};
+    $coordData{'atoms'}[$i]{'velZ'} = ($coordData{'atoms'}[$i]{'cooZ'} - $halfZBox) / $halfZBox;
+#    printf("%f   %f\n", $coordData{'atoms'}[$i]{'cooZ'}, ($coordData{'atoms'}[$i]{'cooZ'} - $halfZBox) / $halfZBox);
+}
+GRO::writeGro($groOutFile, \%coordData);
+################################################################################
+
+
+
+
+################################################################################
+### Subroutines ################################################################
+################################################################################
+sub printHead {
+    my @headLines = ("################################################################################",
+                     "",
+                     "get_zcollisionvel $version",
+                     "Converts the z velocity vectors of the atoms in a GRO file according to their z coordinates.",
+                     "Copyright Thomas H. Schmidt, $year",
+                     "",
+                     "http://code.google.com/p/dancesteps",
+                     "",
+                     "DanceSteps comes with ABSOLUTELY NO WARRANTY.",
+                     "This is free software, and you are welcome to redistribute it",
+                     "under certain conditions; type `-copyright' for details.",
+                     "",
+                     "################################################################################");
+    my $maxLength = 80;
+    foreach (@headLines) {
+        $maxLength = (length $_ > $maxLength) ? length($_) : $maxLength;
+    }
+
+    foreach (@headLines) {
+        printf "%s%-${maxLength}s\n", ' ' x int(($maxLength - length($_))/2), $_;
+    }
+}
+
+
+
+sub printFoot {
+    print <<EndOfFoot;
+Please cite:
+  [1] Schmidt, T. H. DanceSteps
+
+EndOfFoot
+}
+
+
+
+sub printHelp {
+    my $cmdLParamRef   = shift;
+    my $quitAfterPrint = shift;
+
+
+    print <<EndOfHelp;
+DESCRIPTION
+-----------
+get_zcollisionvel reads a GROMACS coordinate file and converts new z velocity
+vectors according to the z component of the respective atom position. Thus, as
+the name suggests, the two z-halves of the simulation box flow to the z-center,
+leading to a collision.
+
+The underlying function for the z component of the atomic velocity vector
+is:                         v = (z - c) / c
+where z is the z-component of the atomic position and c is the z-center of the
+simulation box (z_{Box}/2).
+The consequence of this formula is that atoms at the z-limiting sides of the box
+have a normalized z-velocity close to -1 if they are on the top side of the box
+and +1 if they occur at the bottom side, while the z-velocity of atoms close to
+the center is around 0.
+
+USAGE: get_zcollisionvel -f INGROFILE -o OUTGROFILE
+
+EndOfHelp
+
+    Cmdline::printParamHelp($cmdLParamRef);
+
+    printFoot();
+
+    exit if $quitAfterPrint;
+}
+
+
+
+sub printCopyright {
+    print <<"EndOfCopyright";
+DanceSteps is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+any later version.
+
+DanceSteps is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with DanceSteps; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+EndOfCopyright
+    exit;
+}
