@@ -12,8 +12,8 @@ use FindBin qw($RealBin); # Absolute path to THIS script.
 use lib $RealBin . "/modules";
 autoflush STDOUT 1; # For direct output (IO:Handle).
 
-use cmdline;
-use FileIO::gro;
+use Commandline;
+use FileIO::Gro;
 ################################################################################
 
 
@@ -44,27 +44,27 @@ printHead();
 
 
 ### Handle commandline parameters ##############################################
-Cmdline::addCmdlParam('scalar', 'f', 'Input', \$groInFile, $groInFile, 'Structure file: gro');
-Cmdline::addCmdlParam('scalar', 'o', 'Output', \$groOutFile, $groOutFile, 'Structure file: gro');
-#Cmdline::addCmdlParam('array', 't', 'Input, Mult.', \@multiArray, 'traj.gro', 'Trajectory: gro'); # NOTE: Just an example.
-Cmdline::addCmdlParam('flag', 'h', 'bool', \$helpAndQuit, $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
-Cmdline::addCmdlParam('flag', 'v', 'bool', \$verbose, $verbose ? 'yes' : 'no', 'Be loud and noisy');
+Commandline::addCmdlParam('scalar', 'f', 'Input', \$groInFile, $groInFile, 'Structure file: gro');
+Commandline::addCmdlParam('scalar', 'o', 'Output', \$groOutFile, $groOutFile, 'Structure file: gro');
+#Commandline::addCmdlParam('array', 't', 'Input, Mult.', \@multiArray, 'traj.gro', 'Trajectory: gro'); # NOTE: Just an example.
+Commandline::addCmdlParam('flag', 'h', 'bool', \$helpAndQuit, $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
+Commandline::addCmdlParam('flag', 'v', 'bool', \$verbose, $verbose ? 'yes' : 'no', 'Be loud and noisy');
 
-Cmdline::parser();
+Commandline::cmdlParser();
 ################################################################################
 
 
 
 ### Read the GRO files #########################################################
-%coordData = GRO::readGro($groInFile); # Read input GRO file.
+%coordData = FileIO::GRO::readGro($groInFile); # Read input GRO file.
 $halfZBox = $coordData{'box'}{'cooZ'} / 2;
 
 for (my $i=1; $i<@{$coordData{'atoms'}}; $i++) {
     next unless $coordData{'atoms'}[$i]{'atomName'};
-    $coordData{'atoms'}[$i]{'velZ'} = ($coordData{'atoms'}[$i]{'cooZ'} - $halfZBox) / $halfZBox;
+    $coordData{'atoms'}[$i]{'velZ'} = ($halfZBox - $coordData{'atoms'}[$i]{'cooZ'}) / $halfZBox;
 #    printf("%f   %f\n", $coordData{'atoms'}[$i]{'cooZ'}, ($coordData{'atoms'}[$i]{'cooZ'} - $halfZBox) / $halfZBox);
 }
-GRO::writeGro($groOutFile, \%coordData);
+FileIO::GRO::writeGro($groOutFile, \%coordData);
 ################################################################################
 
 
@@ -123,7 +123,7 @@ the name suggests, the two z-halves of the simulation box flow to the z-center,
 leading to a collision.
 
 The underlying function for the z component of the atomic velocity vector
-is:                         v = (z - c) / c
+is:                         v = (c - z) / c
 where z is the z-component of the atomic position and c is the z-center of the
 simulation box (z_{Box}/2).
 The consequence of this formula is that atoms at the z-limiting sides of the box
@@ -135,7 +135,7 @@ USAGE: get_zcollisionvel -f INGROFILE -o OUTGROFILE
 
 EndOfHelp
 
-    Cmdline::printParamHelp($cmdLParamRef);
+    Commandline::printParamHelp($cmdLParamRef);
 
     printFoot();
 
