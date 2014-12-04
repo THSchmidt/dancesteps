@@ -178,8 +178,14 @@ sub writeCoords {
 
     foreach (@{$$groDataRef{'atoms'}}) {
         next unless $$_{'uResId'};
-        printf($fileHandle "%5d%-5s%5s%5d%8.3f%8.3f%8.3f\n",
-            ($$_{'uResId'}%100000), $$_{'resName'}, $$_{'atomName'}, ($$_{'serial'}%100000), $$_{'cooX'}, $$_{'cooY'}, $$_{'cooZ'});
+        if ($$_{'velX'}) {
+            printf($fileHandle "%5d%-5s%5s%5d%8.3f%8.3f%8.3f%8.4f%8.4f%8.4f\n",
+                ($$_{'uResId'}%100000), $$_{'resName'}, $$_{'atomName'}, ($$_{'serial'}%100000), $$_{'cooX'}, $$_{'cooY'}, $$_{'cooZ'}, $$_{'velX'}, $$_{'velY'}, $$_{'velZ'});
+        }
+        else {
+            printf($fileHandle "%5d%-5s%5s%5d%8.3f%8.3f%8.3f\n",
+                ($$_{'uResId'}%100000), $$_{'resName'}, $$_{'atomName'}, ($$_{'serial'}%100000), $$_{'cooX'}, $$_{'cooY'}, $$_{'cooZ'});
+        }
     }
 }
 
