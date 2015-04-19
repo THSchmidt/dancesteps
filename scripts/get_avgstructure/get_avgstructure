@@ -35,7 +35,7 @@ use FileIO::Xvg;
 
 ### Default Parameters #########################################################
 our $version        = "rc1";              # Version number.
-our $year           = "2013";             # Year (of change).
+our $year           = "2015";             # Year (of change).
 
 our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
 
@@ -44,7 +44,7 @@ my $xtcInFile       = 'traj.xtc';         # Input trajectory file.
 my $ndxInFile       = '';                 # Input GROMACS index file.
 
 my %timeRange;
-$timeRange{'range'}{'min'}  = 20000;      # Start analyzing trajectory after >$trajBegin< ps.
+$timeRange{'range'}{'min'}  = 0;          # Start analyzing trajectory after >$trajBegin< ps.
 $timeRange{'range'}{'max'}  = '';
 $timeRange{'range'}{'step'} = '';
 
@@ -62,7 +62,8 @@ my @ndxData;             # Filled by "NDXFiles::readNdx(<NDXFILE>)".
 my @ndxAnalysisGroupIds; # Filled by "FileIO::NDX::selectGroupIds;
 my @ndxOutputGroupIds;   # Filled by "FileIO::NDX::selectGroupIds;
 my $gConfrmsFile = "gConfrms.dat";
-my $logFile   = "avgstructure.log";
+my $logFile      = "avgstructure.log";
+my $chars2Escape = '^%*&#@^&%';
 ################################################################################
 
 
@@ -115,12 +116,13 @@ for (my $i=0; $i<@ndxAnalysisGroupIds; $i++) {
     my $outGroupName   = $ndxData[ $ndxOutputGroupIds[$i] ]{'groupName'};
 #
     print "$anaGroupName -> $outGroupName\n";
+    $anaGroupName =~ s/&/\\\&/sg;
 
 
     ### Preparation ############################################################
     my $thisAvgStruct = sprintf("%s.avg.%02d.pdb", $anaGroupName, 0);
     system("echo " . $ndxAnalysisGroupIds[$i] . " | trjconv -s $coordInFile -f $xtcInFile -n $ndxInFile -o " . $anaGroupName . ".selected.xtc -b " . $timeRange{'range'}{'min'} . " -pbc nojump >>$logFile 2>&1"); # Extract the selected atoms over time.
-    system("echo " . $ndxAnalysisGroupIds[$i] . " | g_rmsf -s $coordInFile -f $xtcInFile -n $ndxInFile -ox $thisAvgStruct -b " . $timeRange{'range'}{'min'} . " -fit >>$logFile 2>&1");
+    system("echo " . $ndxAnalysisGroupIds[$i] . " | gmx rmsf -s $coordInFile -f $xtcInFile -n $ndxInFile -ox $thisAvgStruct -b " . $timeRange{'range'}{'min'} . " -fit >>$logFile 2>&1");
     system("rm rmsf.xvg"); # Clean up.
     ############################################################################
 
