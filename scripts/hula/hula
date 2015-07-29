@@ -3,8 +3,10 @@
 use strict;
 
 
-my $inXpmFile   = shift;
-my $outDatFile  = shift;
+my $inXpmFile    = shift;
+my $outDatFile   = shift;
+my $noeModeFlag  = shift; # NOE-like mode: measure deviations from a random coil.
+my $probModeFlag = shift; # Probability mode: measure the amount of certain sec. structural components per residue.
 
 my %convertKeys = ('~' => 'C',  # Coil
                    'E' => 'E',  # beta sheet/beta bulge
@@ -20,24 +22,27 @@ my $keyListStr  = join("", keys(%convertKeys));
 my @resIdSeq;
 my @resIdDevia;        # Number of deviations from the initial structure per residue.
 my @resIdDeviaPercent; # Number of deviations from the initial structure per residue (percent).
+my @resIdProba;        # Number of deviations from the initial structure per residue.
+my @resIdProbaPercent; # Number of deviations from the initial structure per residue (percent).
 
 exit unless $inXpmFile;
 
 open(XPMFILE, "<$inXpmFile") || die "ERROR: Cannot open XPM file \"$inXpmFile\": $!\n";
 while(<XPMFILE>) {
-    push(@resIdSeq, $1) if ($_ =~ /^\"([$keyListStr]+)\",?$/);
+    push(@resIdSeq, $1) if ($_ =~ /^\"([$keyListStr]+).*\",?$/);
 }
 close(XPMFILE);
 
 
 print "Found " . @resIdSeq . " residues\n";
 
+
 my $resId = 0;
 
 for (my $i=(scalar(@resIdSeq)-1); $i>=0; $i--) {
     $resId++;
     
-    ### Convert sequence first to a H/E/C only sequence ########################
+    ### Simplify sequence ######################################################
     foreach my $tmpKey (keys(%convertKeys)) {
         $resIdSeq[$i] =~ s/$tmpKey/$convertKeys{$tmpKey}/g;
     }
@@ -45,14 +50,36 @@ for (my $i=(scalar(@resIdSeq)-1); $i>=0; $i--) {
 
     ### Test each sequence element if it deviates from its initial structure ###
     my @tmpArray = split(//, $resIdSeq[$i]);
-    my $iniStruc = $tmpArray[0];
-    for (my $frameId=1; $frameId<@tmpArray; $frameId++) {
-        $resIdDevia[$resId]++ unless $tmpArray[$frameId] eq $iniStruc;
+    if ($noeModeFlag) {
+        my $compareStru = 'C';
+        for (my $frameId=0; $frameId<@tmpArray; $frameId++) {
+            $resIdDevia[$resId]++ unless $tmpArray[$frameId] eq $compareStru;
+        }
+    }
+    elsif ($probModeFlag) {
+        for (my $frameId=0; $frameId<@tmpArray; $frameId++) {
+            $resIdProba[$resId]{'helix'}++    if $tmpArray[$frameId] eq 'H';
+            $resIdProba[$resId]{'extended'}++ if $tmpArray[$frameId] eq 'E';
+            $resIdProba[$resId]{'coil'}++     if $tmpArray[$frameId] eq 'C';
+            $resIdProba[$resId]{'all'}++;
+        }
+    }
+    else {
+        my $iniStruc = $tmpArray[0];
+        for (my $frameId=1; $frameId<@tmpArray; $frameId++) {
+            $resIdDevia[$resId]++ unless $tmpArray[$frameId] eq $iniStruc;
+        }
     }
     ############################################################################
 
     ### Calculate the percentage value of deviations ###########################
     $resIdDeviaPercent[$resId] = $resIdDevia[$resId]*100/scalar(@tmpArray) if $resIdDevia[$resId];
+
+    if ($probModeFlag) {
+        $resIdProbaPercent[$resId]{'helix'}    = $resIdProba[$resId]{'helix'}*100/$resIdProba[$resId]{'all'} if $resIdProba[$resId]{'helix'};
+        $resIdProbaPercent[$resId]{'extended'} = $resIdProba[$resId]{'extended'}*100/$resIdProba[$resId]{'all'} if $resIdProba[$resId]{'extended'};
+        $resIdProbaPercent[$resId]{'coil'}     = $resIdProba[$resId]{'coil'}*100/$resIdProba[$resId]{'all'} if $resIdProba[$resId]{'coil'};
+    }
     ############################################################################
 }
 
@@ -63,9 +90,31 @@ unless ($outDatFile) {
     $outDatFile .= '.dat';
 }
 
+
 open(OUTFILE, ">$outDatFile") || die "ERROR: Cannot open file \"$outDatFile\": $!\n";
 printf OUTFILE ("# ResID   nChanges   Percent\n");
 for (my $resId=0; $resId<@resIdSeq; $resId++) {
-    printf OUTFILE ("  %5d      %5d   %7.3f\n", $resId, $resIdDevia[$resId] ? $resIdDevia[$resId] : 0, $resIdDeviaPercent[$resId] ? $resIdDeviaPercent[$resId] : 0);
+    printf OUTFILE ("  %5d      %5d   %7.3f\n", $resId+1, $resIdDevia[$resId] ? $resIdDevia[$resId] : 0, $resIdDeviaPercent[$resId] ? $resIdDeviaPercent[$resId] : 0);
 }
 close(OUTFILE);
+
+if ($probModeFlag) {
+    my $outProbFile = $outDatFile;
+    $outProbFile =~ s/\.dat/\.prop\.dat/g;
+    
+
+    open(OUTFILE, ">$outProbFile") || die "ERROR: Cannot open file \"$outProbFile\": $!\n";
+    printf OUTFILE ("# ResID   nHelix   PercentHelix   nExtended   PercentExtended   nCoil   PercentCoil\n");
+    for (my $resId=0; $resId<@resIdSeq; $resId++) {
+        printf OUTFILE ("  %5d    %5d %7.3f   %5d %7.3f   %5d %7.3f\n",
+                        $resId+1,
+                        $resIdProba[$resId]{'helix'} ? $resIdProba[$resId]{'helix'} : 0,
+                        $resIdProbaPercent[$resId]{'helix'} ? $resIdProbaPercent[$resId]{'helix'} : 0,
+                        $resIdProba[$resId]{'extended'} ? $resIdProba[$resId]{'extended'} : 0,
+                        $resIdProbaPercent[$resId]{'extended'} ? $resIdProbaPercent[$resId]{'extended'} : 0,
+                        $resIdProba[$resId]{'coil'} ? $resIdProba[$resId]{'coil'} : 0,
+                        $resIdProbaPercent[$resId]{'coil'} ? $resIdProbaPercent[$resId]{'coil'} : 0);
+    }
+    close(OUTFILE);
+}
+
