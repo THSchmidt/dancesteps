@@ -146,7 +146,7 @@ sub writeCoords {
                        "atomName"   => "X",
                        "altLoc"     => "",
                        "resName"    => "RES",
-                       "chainId"    => 0,
+                       "chainId"    => 'A',
                        "resId"      => 0,
                        "iCode"      => "",
                        "cooX"       => 0.0,
@@ -167,7 +167,7 @@ sub writeCoords {
         ########################################################################
         $$_{'element'} = substr($$_{'atomName'}, 0, 1) if $$_{'element'} eq 'X';
 
-        printf($fileHandle "ATOM  %5d %4s%1s%4s%1s%4d%1s   %8.3f%8.3f%8.3f%6.2f%6s          %2s%2s\n",
+        printf($fileHandle "ATOM  %5d %4s%1s%3s %1s%4d%1s   %8.3f%8.3f%8.3f%6.2f%6s          %2s%2s\n",
             (($atomId++)%100000), $$_{'atomName'}, $$_{'altLoc'}, $$_{'resName'}, $$_{'chainId'}, ($$_{'resId'}%10000),  $$_{'iCode'}, ($$_{'cooX'}*10), ($$_{'cooY'}*10), ($$_{'cooZ'}*10), $$_{'occupancy'}, substr(sprintf("%6f", $$_{'tempFactor'}), 0, 6), $$_{'element'}, $$_{'charge'});
     }
 }
