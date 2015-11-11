@@ -29,7 +29,7 @@ exit unless $inXpmFile;
 
 open(XPMFILE, "<$inXpmFile") || die "ERROR: Cannot open XPM file \"$inXpmFile\": $!\n";
 while(<XPMFILE>) {
-    push(@resIdSeq, $1) if ($_ =~ /^\"([$keyListStr]+).*\",?$/);
+    push(@resIdSeq, $1) if ($_ =~ /^\"([$keyListStr]+)\",?$/);
 }
 close(XPMFILE);
 
@@ -90,14 +90,6 @@ unless ($outDatFile) {
     $outDatFile .= '.dat';
 }
 
-
-open(OUTFILE, ">$outDatFile") || die "ERROR: Cannot open file \"$outDatFile\": $!\n";
-printf OUTFILE ("# ResID   nChanges   Percent\n");
-for (my $resId=0; $resId<@resIdSeq; $resId++) {
-    printf OUTFILE ("  %5d      %5d   %7.3f\n", $resId+1, $resIdDevia[$resId] ? $resIdDevia[$resId] : 0, $resIdDeviaPercent[$resId] ? $resIdDeviaPercent[$resId] : 0);
-}
-close(OUTFILE);
-
 if ($probModeFlag) {
     my $outProbFile = $outDatFile;
     $outProbFile =~ s/\.dat/\.prop\.dat/g;
@@ -114,6 +106,14 @@ if ($probModeFlag) {
                         $resIdProbaPercent[$resId]{'extended'} ? $resIdProbaPercent[$resId]{'extended'} : 0,
                         $resIdProba[$resId]{'coil'} ? $resIdProba[$resId]{'coil'} : 0,
                         $resIdProbaPercent[$resId]{'coil'} ? $resIdProbaPercent[$resId]{'coil'} : 0);
+    }
+    close(OUTFILE);
+}
+else {
+    open(OUTFILE, ">$outDatFile") || die "ERROR: Cannot open file \"$outDatFile\": $!\n";
+    printf OUTFILE ("# ResID   nChanges   Percent\n");
+    for (my $resId=0; $resId<@resIdSeq; $resId++) {
+        printf OUTFILE ("  %5d      %5d   %7.3f\n", $resId+1, $resIdDevia[$resId] ? $resIdDevia[$resId] : 0, $resIdDeviaPercent[$resId] ? $resIdDeviaPercent[$resId] : 0);
     }
     close(OUTFILE);
 }
