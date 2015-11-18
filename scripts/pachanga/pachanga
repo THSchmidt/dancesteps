@@ -23,18 +23,18 @@
 use strict;
 use IO::Handle;
 use FindBin qw($RealBin); # Absolute path to THIS script.
+use LWP::Simple;
 use lib ($RealBin."/modules/FileIO", $RealBin."/modules");
 autoflush STDOUT 1; # For direct output.
 
 use Commandline;
-use FileIO::Gro;
-use FileIO::Ndx;
+use Statistics;
 ################################################################################
 
 
 
 ### Default Parameters #########################################################
-our $version        = "1alpha";           # Version number.
+our $version        = "1a";               # Version number.
 our $year           = "2015";             # Year (of change).
 
 our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
@@ -63,10 +63,10 @@ printHead();
 
 
 ### Handle commandline parameters ##############################################
-addCmdlParam('scalar', 'f',       'Input',       \$pdbIdFile,                  $pdbIdFile, 'PDB ID list file: dat');
-addCmdlParam('flag',   'h',       'bool',        \$helpAndQuit,                $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
-addCmdlParam('flag',   'copyright','bool',       \$copyright,                  $copyright ? 'yes' : 'no', 'Print copyright information');
-addCmdlParam('flag',   'v',       'bool',        \$verbose,                    $verbose ? 'yes' : 'no', 'Be loud and noisy');
+addCmdlParam('scalar', 'f',        'Input',      \$pdbIdFile,        $pdbIdFile, 'PDB ID list file: dat');
+addCmdlParam('flag',   'h',        'bool',       \$helpAndQuit,      $helpAndQuit ? 'yes' : 'no', 'Print help info and quit');
+addCmdlParam('flag',   'copyright','bool',       \$copyright,        $copyright ? 'yes' : 'no', 'Print copyright information');
+addCmdlParam('flag',   'v',        'bool',       \$verbose,          $verbose ? 'yes' : 'no', 'Be loud and noisy');
 
 cmdlParser();
 ################################################################################
@@ -79,10 +79,69 @@ printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
 
 
 
+### 
+@pdbIds = readPdbListFile($pdbIdFile);
+
+my $pdbFileDir = "pdbfiles";
+mkdir($pdbFileDir);
+
+foreach (@pdbIds) {
+    print $$_{'id'} . "\n";
+    my $pdbDownlFile = $pdbFileDir . "/" . $$_{'id'} . ".pdb";
+    my $pdbFile      = $pdbFileDir . "/" . $$_{'id'} . "_chain" . $$_{'chain'} . ".pdb";
+
+
+    ### Download PDB file and extract chains ###################################
+    my $tmpUrl = "http://www.rcsb.org/pdb/download/downloadFile.do?fileFormat=pdb&compression=NO&structureId=" . $$_{'id'};
+    #getstore($tmpUrl, $pdbFile);
+    system("perl ../extract_chainseq/extract_chainseq -p $pdbDownlFile >>log.out 2>&1");
+    ############################################################################
+
+
+
+    ### Analyze using GROMACS ##################################################
+    system("echo 0 | gmx gyrate -s $pdbFile -f $pdbFile -o gyrate." . $$_{'id'} . "_chain" . $$_{'chain'} . ".xvg -p >>log.out 2>&1");
+
+    my @radii = readGyrateFile("gyrate." . $$_{'id'} . "_chain" . $$_{'chain'} . ".xvg");
+    my $radiiAvg = ($radii[0]+$radii[1]+$radii[2])/3;
+    my @statistics = Statistics::all(\@radii);
+    print "$statistics[0] $statistics[1] $statistics[2] = " . $radiiAvg . "\n";
+    ############################################################################
+}
+################################################################################
+
+
 exit;
 
+sub readGyrateFile {
+    my $gyrateFile = shift;
+    my @radii;
+
+    open(GYRATEFILE, "<$gyrateFile") || die "ERROR: Cannot open radius of gyration XVG file \"$gyrateFile\": $!\n";
+    while (<GYRATEFILE>) {
+        if ($_ =~ /\d+\s+[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?\s+([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)\s+([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)\s+([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)/) {
+            $radii[0] = $2;
+            $radii[1] = $4;
+            $radii[2] = $6;
+        }
+    }
+    close(GYRATEFILE);
+
+    return @radii;
+}
 
 
+sub readPdbListFile {
+
+    my @pdbIds;
+    @pdbIds = ( { 'id'    => '1MBO',
+                  'chain' => 'A' },
+                { 'id'    => '2AVZ',
+                  'chain' => 'A' },
+                { 'id'    => '4WMT',
+                  'chain' => 'A' } );
+    return @pdbIds;
+}
 
 ################################################################################
 ### Subroutines ################################################################

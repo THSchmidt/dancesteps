@@ -14,8 +14,9 @@ if ($fileNames[0] eq '-p') {
 
 foreach (@fileNames) {
     my $pdbFile   = $_;
-    $pdbFile      =~ /(.{4})\.pdb\s*$/;
-    my $pdbId     = $1;
+    $pdbFile      =~ /(.*\/?)(.{4})\.pdb\s*$/;
+    my $path      = $1;
+    my $pdbId     = $2;
     my $chainsStr = qx($Bin/getpdbchains $_);
     my @chains    = split("\n", $chainsStr);
     my $ndxFile   = "temp.ndx";
@@ -35,18 +36,18 @@ foreach (@fileNames) {
                 write_makeNdxAnswerFile("temp.make_ndx.answers", "$proteinNdxGroup & chain " . $chains[$i] .  "\nq\n");
                 system("make_ndx -f $pdbFile -o $ndxFile <temp.make_ndx.answers");
 
-                system("echo " . scalar(@ndxData) . " | editconf -f $pdbFile -n $ndxFile -o " . $pdbId . "_chain" . $chains[$i] . ".pdb");
+                system("echo " . scalar(@ndxData) . " | editconf -f $pdbFile -n $ndxFile -o " . $path . $pdbId . "_chain" . $chains[$i] . ".pdb");
 
-                system("babel -ipdb " . $pdbId . "_chain" . $chains[$i] . ".pdb -ofasta " . $pdbId . "_chain" . $chains[$i] . ".fasta");
+                system("babel -ipdb " . $path . $pdbId . "_chain" . $chains[$i] . ".pdb -ofasta " . $path . $pdbId . "_chain" . $chains[$i] . ".fasta");
             }
         }
         else {
             write_makeNdxAnswerFile("temp.make_ndx.answers", "chain " . $chains[$i] .  "\nq\n");
             system("make_ndx -f $pdbFile -o $ndxFile <temp.make_ndx.answers");
 
-            system("echo " . scalar(@ndxData) . " | editconf -f $pdbFile -n $ndxFile -o " . $pdbId . "_chain" . $chains[$i] . ".pdb");
+            system("echo " . scalar(@ndxData) . " | editconf -f $pdbFile -n $ndxFile -o " . $path . $pdbId . "_chain" . $chains[$i] . ".pdb");
 
-            system("babel -ipdb " . $pdbId . "_chain" . $chains[$i] . ".pdb -ofasta " . $pdbId . "_chain" . $chains[$i] . ".fasta");
+            system("babel -ipdb " . $path . $pdbId . "_chain" . $chains[$i] . ".pdb -ofasta " . $path . $pdbId . "_chain" . $chains[$i] . ".fasta");
         }
         system("rm temp.make_ndx.answers $ndxFile \\#" . $ndxFile . "*");
     }
