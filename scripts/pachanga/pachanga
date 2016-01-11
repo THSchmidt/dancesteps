@@ -49,9 +49,6 @@ my $pdbIdFile       = 'pdbids.txt';       # Input PDB ID list file.
 
 ### Internal parameters ########################################################
 my @pdbIds;            # Filled by "readPdbListFile(<PDBLISTFILE>)".
-#my %coordData;         # Filled by "GROFiles::readGro(<GROFILE>)".
-#my @ndxData;           # Filled by "NDXFiles::readNdx(<NDXFILE>)".
-#my @thickNdxGroupIds;  # Filled by "NDXFiles::selectGroupIds(...)".
 ################################################################################
 
 
@@ -80,38 +77,134 @@ printHelp(getCmdlParamRef(), 1) if $helpAndQuit;
 
 
 ### 
-@pdbIds = readPdbListFile($pdbIdFile);
+@pdbIds = readPdbIdFile($pdbIdFile);
+
+my @outputGlobular;
+my @outputNonGlobular;
 
 my $pdbFileDir = "pdbfiles";
 mkdir($pdbFileDir);
 
-foreach (@pdbIds) {
-    print $$_{'id'} . "\n";
-    my $pdbDownlFile = $pdbFileDir . "/" . $$_{'id'} . ".pdb";
-    my $pdbFile      = $pdbFileDir . "/" . $$_{'id'} . "_chain" . $$_{'chain'} . ".pdb";
+for (my $i=0; $i<@pdbIds; $i++) {
+    print $pdbIds[$i]{'id'} . "(" . $pdbIds[$i]{'chain'} . ")";
+    my $pdbDownlFile = $pdbFileDir . "/" . $pdbIds[$i]{'id'} . ".pdb";
+    my $pdbFile      = $pdbFileDir . "/" . $pdbIds[$i]{'id'} . "_chain" . $pdbIds[$i]{'chain'} . ".pdb";
 
 
     ### Download PDB file and extract chains ###################################
-    my $tmpUrl = "http://www.rcsb.org/pdb/download/downloadFile.do?fileFormat=pdb&compression=NO&structureId=" . $$_{'id'};
-    #getstore($tmpUrl, $pdbFile);
-    system("perl ../extract_chainseq/extract_chainseq -p $pdbDownlFile >>log.out 2>&1");
+    my $tmpUrl = "http://www.rcsb.org/pdb/download/downloadFile.do?fileFormat=pdb&compression=NO&structureId=" . $pdbIds[$i]{'id'};
+    getstore($tmpUrl, $pdbDownlFile);
+    unless (-e $pdbDownlFile) {
+        print " :: WARNING: Could not download PDB-File. Try the next one.\n";
+        next;
+    }
+    system("perl ../extract_chainseq/extract_chainseq -ph $pdbDownlFile >>log.out 2>&1");
     ############################################################################
 
 
 
     ### Analyze using GROMACS ##################################################
-    system("echo 0 | gmx gyrate -s $pdbFile -f $pdbFile -o gyrate." . $$_{'id'} . "_chain" . $$_{'chain'} . ".xvg -p >>log.out 2>&1");
+    system("echo 0 | gmx gyrate -s $pdbFile -f $pdbFile -o gyrate." . $pdbIds[$i]{'id'} . "_chain" . $pdbIds[$i]{'chain'} . ".xvg -p >>log.out 2>&1");
 
-    my @radii = readGyrateFile("gyrate." . $$_{'id'} . "_chain" . $$_{'chain'} . ".xvg");
-    my $radiiAvg = ($radii[0]+$radii[1]+$radii[2])/3;
+    my @radii = readGyrateFile("gyrate." . $pdbIds[$i]{'id'} . "_chain" . $pdbIds[$i]{'chain'} . ".xvg");
     my @statistics = Statistics::all(\@radii);
-    print "$statistics[0] $statistics[1] $statistics[2] = " . $radiiAvg . "\n";
+#    print "  $radii[0] $radii[1] $radii[2] :: mean = $statistics[0] +/-$statistics[2] nm\n";
+
+
+    system("echo 0 | gmx sasa -s $pdbFile -f $pdbFile -tv volume." . $pdbIds[$i]{'id'} . "_chain" . $pdbIds[$i]{'chain'} . ".xvg >>log.out 2>&1");
+    system("rm area.xvg");
+
+    my $PI = 3.1415926;
+    my $volume = readVolumeFile("volume." . $pdbIds[$i]{'id'} . "_chain" . $pdbIds[$i]{'chain'} . ".xvg");
+    my $radiusOfVol = (0.75*$volume/$PI)**(1/3);
+    my $areaOfRadius = $PI*$radiusOfVol*$radiusOfVol;
+
+    if ($statistics[2] > 0.15) {
+        print " :: NOT GLOBULAR (STDDEV = $statistics[2] nm)\n";
+
+        push(@outputNonGlobular, buildHash($pdbIds[$i]{'id'},
+                                        $pdbIds[$i]{'chain'},
+                                        $radii[0],      # Radius of gyration to x-axis.
+                                        $radii[1],      # Radius of gyration to y-axis.
+                                        $radii[2],      # Radius of gyration to z-axis.
+                                        $statistics[0], # Mean.
+                                        $statistics[2], # STDDEV.
+                                        $volume,
+                                        $radiusOfVol,
+                                        $areaOfRadius));
+    }
+    else {
+        print " :: GLOBULAR (STDDEV = $statistics[2] nm)\n";
+
+        push(@outputGlobular, buildHash($pdbIds[$i]{'id'},
+                                        $pdbIds[$i]{'chain'},
+                                        $radii[0],      # Radius of gyration to x-axis.
+                                        $radii[1],      # Radius of gyration to y-axis.
+                                        $radii[2],      # Radius of gyration to z-axis.
+                                        $statistics[0], # Mean.
+                                        $statistics[2], # STDDEV.
+                                        $volume,
+                                        $radiusOfVol,
+                                        $areaOfRadius));
+    }
     ############################################################################
 }
 ################################################################################
 
 
+
+
+### Write out data #############################################################
+open(GLOBULAROUT, ">globular.dat") || die "ERROR: Cannot open output file \"globular.dat\": $!\n";
+print GLOBULAROUT ("PDB# Chain r_x      r_y      r_z      Mean     STDDEV   Volume   r_V      A_r_V\n");
+foreach (@outputGlobular) {
+    printf GLOBULAROUT ("%4s %5s %8.5f %8.5f %8.5f %8.5f %8.5f %8.5f %8.5f %8.5f\n", $$_{'id'}, , $$_{'chain'}, $$_{'rx'}, $$_{'ry'}, $$_{'rz'}, $$_{'mean'}, $$_{'stddev'}, $$_{'volume'}, $$_{'radiusOfVol'}, $$_{'areaOfRadius'});
+}
+close(GLOBULAROUT);
+
+open(NONGLOBULAROUT, ">nonglobular.dat") || die "ERROR: Cannot open output file \"nonglobular.dat\": $!\n";
+print NONGLOBULAROUT ("PDB# Chain r_x      r_y      r_z      Mean     STDDEV   Volume   r_V      A_r_V\n");
+foreach (@outputNonGlobular) {
+    printf NONGLOBULAROUT ("%4s %5s %8.5f %8.5f %8.5f %8.5f %8.5f %8.5f %8.5f %8.5f\n", $$_{'id'}, , $$_{'chain'}, $$_{'rx'}, $$_{'ry'}, $$_{'rz'}, $$_{'mean'}, $$_{'stddev'}, $$_{'volume'}, $$_{'radiusOfVol'}, $$_{'areaOfRadius'});
+}
+close(NONGLOBULAROUT);
+################################################################################
 exit;
+
+
+
+sub buildHash {
+    my %tmpHash = ('id'           => $_[0],
+                   'chain'        => $_[1],
+                   'rx'           => $_[2],
+                   'ry'           => $_[3],
+                   'rz'           => $_[4],
+                   'mean'         => $_[5],
+                   'stddev'       => $_[6],
+                   'volume'       => $_[7],
+                   'radiusOfVol'  => $_[8],
+                   'areaOfRadius' => $_[9]);
+    return \%tmpHash;
+}
+
+
+
+sub readVolumeFile {
+    my $volumeFile = shift;
+    my $volume;
+
+    open(VOLUMEFILE, "<$volumeFile") || die "ERROR: Cannot open volume XVG file \"$volumeFile\": $!\n";
+    while (<VOLUMEFILE>) {
+        if ($_ =~ /[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?\s+([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)\s+[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/) {
+            $volume = $2;
+        }
+    }
+    close(VOLUMEFILE);
+
+    return $volume;
+}
+
+
 
 sub readGyrateFile {
     my $gyrateFile = shift;
@@ -131,15 +224,32 @@ sub readGyrateFile {
 }
 
 
-sub readPdbListFile {
+
+sub readPdbIdFile {
+    my $pdbIdFile = shift;
 
     my @pdbIds;
-    @pdbIds = ( { 'id'    => '1MBO',
-                  'chain' => 'A' },
-                { 'id'    => '2AVZ',
-                  'chain' => 'A' },
-                { 'id'    => '4WMT',
-                  'chain' => 'A' } );
+#    @pdbIds = ( { 'id'    => '1MBO',
+#                  'chain' => 'A' },
+#                { 'id'    => '2AVZ',
+#                  'chain' => 'A' },
+#                { 'id'    => '4WMT',
+#                  'chain' => 'A' },
+#                { 'id'    => '2HCO',
+#                  'chain' => 'A' },
+#                { 'id'    => '1E7I',
+#                  'chain' => 'A' } );
+
+    open(PDBIDFILE, "<$pdbIdFile") || die "ERROR: Cannot open PDB ID file \"$pdbIdFile\": $!\n";
+    while (<PDBIDFILE>) {
+        if ($_ =~ /^\s*([A-Z0-9]{4})\s*([A-Z])/) {
+            my %tmpHash = ('id'    => $1,
+                           'chain' => $2);
+            push(@pdbIds, \%tmpHash);
+        }
+    }
+    close(PDBIDFILE);
+
     return @pdbIds;
 }
 
