@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-# Copyright 2015 Thomas H. Schmidt
+# Copyright 2016 Thomas H. Schmidt
 #
 # This file is part of DanceSteps.
 #
@@ -34,8 +34,8 @@ use Statistics;
 
 
 ### Default Parameters #########################################################
-our $version        = "1a";               # Version number.
-our $year           = "2015";             # Year (of change).
+our $version        = "1";                # Version number.
+our $year           = "2016";             # Year (of change).
 
 our $verbose        = 0;                  # Be loud and noisy (and global); default: silent.
 our $copyright      = 0;                  # Print copyright information.
