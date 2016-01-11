@@ -5,9 +5,14 @@ use FindBin qw($Bin); # Absolute path to THIS script.
 
 my @fileNames = @ARGV;
 my $selProt = 0;
+my $selProtHeavyAtoms = 0;
 
 if ($fileNames[0] eq '-p') {
     $selProt = 1;
+    shift(@fileNames);
+}
+elsif ($fileNames[0] eq '-ph') {
+    $selProtHeavyAtoms = 1;
     shift(@fileNames);
 }
 
@@ -29,8 +34,9 @@ foreach (@fileNames) {
 
         my @ndxData = NDXFiles::read($ndxFile); # Read input NDX file.
 
-        if ($selProt) {
-            my $proteinNdxGroup = NDXFiles::getGroupByName(\@ndxData, '^\s*Protein\s*$');
+        if ($selProt or $selProtHeavyAtoms) {
+            my $proteinNdxGroup = NDXFiles::getGroupByName(\@ndxData, '^\s*Protein\s*$') if $selProt;
+            my $proteinNdxGroup = NDXFiles::getGroupByName(\@ndxData, '^\s*Protein-H\s*$') if $selProtHeavyAtoms;
 
             if (defined $proteinNdxGroup) {
                 write_makeNdxAnswerFile("temp.make_ndx.answers", "$proteinNdxGroup & chain " . $chains[$i] .  "\nq\n");
